@@ -1,0 +1,75 @@
+# JVM / Maven
+target/
+*.class
+*.jar
+*.war
+*.ear
+*.nar
+hs_err_pid*
+replay_pid*
+.mvn/wrapper/maven-wrapper.jar
+
+# IDE
+.idea/
+*.iml
+*.iws
+*.ipr
+.vscode/
+.project
+.classpath
+.settings/
+.factorypath
+*.swp
+*.swo
+
+# Node / frontend
+node_modules/
+dist/
+build/
+.vite/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env / secrets
+.env
+.env.local
+.env.*.local
+*.key
+*.pem
+
+# Test / coverage
+coverage/
+.nyc_output/
+*.lcov
+playwright-report/
+test-results/
+blob-report/
+.playwright-cache/
+
+# Docker / runtime
+docker/data/
+docker/grafana/data/
+docker/prometheus/data/
+*.pid
+
+# OTel
+otel-data/
+
+# Logs
+logs/
+*.log
+
+# Frontend lockfile we keep
+!package-lock.json
+
+# Frontend TS build artefacts (allow source .ts only)
+*.tsbuildinfo
+frontend/vite.config.js
+frontend/vite.config.d.ts

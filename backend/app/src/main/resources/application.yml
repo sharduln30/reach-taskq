@@ -1,0 +1,101 @@
+spring:
+  application:
+    name: reach-taskq
+  threads:
+    virtual:
+      enabled: true
+  datasource:
+    url: jdbc:postgresql://${POSTGRES_HOST:localhost}:${POSTGRES_PORT:5432}/${POSTGRES_DB:taskq}
+    username: ${POSTGRES_USER:taskq}
+    password: ${POSTGRES_PASSWORD:taskq_dev_pw}
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 5
+      pool-name: taskq-hikari
+      auto-commit: false
+      connection-timeout: 5000
+      validation-timeout: 2000
+      max-lifetime: 1800000
+  flyway:
+    enabled: true
+    baseline-on-migrate: false
+    locations: classpath:db/migration
+  jackson:
+    default-property-inclusion: non_null
+    serialization:
+      write-dates-as-timestamps: false
+
+server:
+  port: ${TASKQ_API_PORT:8080}
+  shutdown: graceful
+  compression:
+    enabled: true
+  error:
+    include-message: always
+    include-binding-errors: always
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+      base-path: /actuator
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: when-authorized
+  metrics:
+    tags:
+      service: ${spring.application.name}
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+        taskq.processing.duration: true
+        taskq.lease.age: true
+      percentiles:
+        http.server.requests: 0.5,0.9,0.95,0.99,0.999
+  observations:
+    annotations:
+      enabled: true
+
+taskq:
+  broker: ${TASKQ_BROKER:postgres}
+  worker.enabled: ${TASKQ_WORKER_ENABLED:true}
+  dev:
+    seed-tenant: ${TASKQ_DEV_SEED_TENANT:true}
+    seed-tenant-name: ${TASKQ_DEV_SEED_TENANT_NAME:demo}
+    seed-tenant-api-key: ${TASKQ_DEV_SEED_API_KEY:demo-api-key-do-not-use-in-prod}
+  redis:
+    host: ${REDIS_HOST:localhost}
+    port: ${REDIS_PORT:6379}
+    password: ${REDIS_PASSWORD:}
+  worker:
+    concurrency: ${TASKQ_WORKER_CONCURRENCY:64}
+    lease-ttl-seconds: ${TASKQ_LEASE_TTL_SECONDS:30}
+    lease-reaper-interval-seconds: ${TASKQ_LEASE_REAPER_INTERVAL_SECONDS:10}
+  outbox:
+    poll-interval-ms: ${TASKQ_OUTBOX_POLL_INTERVAL_MS:200}
+    batch-size: 200
+  scheduler:
+    poll-interval-ms: ${TASKQ_SCHEDULER_POLL_INTERVAL_MS:500}
+  retry:
+    default-max-attempts: ${TASKQ_DEFAULT_MAX_ATTEMPTS:5}
+    backoff-base-ms: ${TASKQ_BACKOFF_BASE_MS:1000}
+    backoff-max-ms: ${TASKQ_BACKOFF_MAX_MS:300000}
+  idempotency:
+    ttl-hours: ${TASKQ_IDEMPOTENCY_TTL_HOURS:24}
+  payload:
+    max-bytes: ${TASKQ_PAYLOAD_MAX_BYTES:1048576}
+  security:
+    jwt:
+      secret: ${TASKQ_JWT_SECRET:change-me-in-production-min-256-bits-long-secret-key-here}
+      access-ttl-minutes: ${TASKQ_JWT_ACCESS_TTL_MINUTES:15}
+      refresh-ttl-days: ${TASKQ_JWT_REFRESH_TTL_DAYS:7}
+
+logging:
+  level:
+    root: INFO
+    com.merakilabs.taskq: DEBUG
+    org.hibernate.SQL: WARN
+    org.springframework.security: INFO

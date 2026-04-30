@@ -1,0 +1,9 @@
+node_modules
+dist
+*.log
+.vite
+.env.local
+test-results
+playwright-report
+playwright-report-e2e
+.playwright-cache

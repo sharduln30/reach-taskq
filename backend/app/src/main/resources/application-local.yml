@@ -1,0 +1,9 @@
+spring:
+  output:
+    ansi:
+      enabled: always
+
+logging:
+  level:
+    com.merakilabs.taskq: DEBUG
+    org.springframework.jdbc.core: DEBUG
