@@ -57,9 +57,15 @@ scripts/         seed + demo helpers
 
 ## Documentation
 
+- [docs/CONTEXT.md](docs/CONTEXT.md) — **start here**: project context, decisions, and run-book for any future contributor (human or LLM agent).
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — components, data flow, design decisions.
 - [docs/RUNBOOK.md](docs/RUNBOOK.md) — operational playbook.
+- [docs/TESTING.md](docs/TESTING.md) — full test stack, including the BE Spring + Testcontainers integration suite and the FE mock-integration suite that asserts UI lifecycle end-to-end without Docker.
 - [docs/adr/](docs/adr/) — architectural decision records.
+
+> The CI workflow lives at `.ci-workflows/test.yml` and needs to be moved to
+> `.github/workflows/test.yml` from the GitHub UI (or by re-pushing with a
+> token that has the `workflow` scope) before Actions will pick it up.
 
 ## License
 
