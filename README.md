@@ -63,14 +63,14 @@ Submit, persist, transport, and process are decoupled at every step. Postgres ho
 
 ```mermaid
 flowchart LR
-    client[HTTP client] --> api[POST /v1/jobs]
-    api --> tx[("jobs + idempotency_keys + outbox<br/>same Postgres tx")]
-    tx --> relay[OutboxRelay<br/>pipelined XADD]
-    relay --> redis[(Redis Streams<br/>"taskq:stream:default")]
-    redis --> worker[WorkerRuntime<br/>virtual threads]
+    client["HTTP client"] --> api["POST /v1/jobs"]
+    api --> tx[("jobs + idempotency_keys + outbox<br/>(same Postgres tx)")]
+    tx --> relay["OutboxRelay<br/>pipelined XADD"]
+    relay --> redis[("Redis Streams<br/>taskq:stream:default")]
+    redis --> worker["WorkerRuntime<br/>virtual threads"]
     worker -->|"conditional UPDATE"| tx
-    worker --> ws[/WebSocket /ws/jobs/]
-    ws --> ui[React dashboard]
+    worker --> ws["WebSocket /ws/jobs/"]
+    ws --> ui["React dashboard"]
 ```
 
 Detailed component diagrams live in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
