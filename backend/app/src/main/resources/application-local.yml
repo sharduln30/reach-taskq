@@ -5,5 +5,5 @@ spring:
 
 logging:
   level:
-    com.merakilabs.taskq: DEBUG
-    org.springframework.jdbc.core: DEBUG
+    com.merakilabs.taskq: ${TASKQ_LOG_LEVEL:INFO}
+    org.springframework.jdbc.core: WARN

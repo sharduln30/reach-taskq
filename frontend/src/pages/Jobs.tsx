@@ -23,8 +23,7 @@ export default function Jobs() {
 
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ["jobs", filter],
-    queryFn: () =>
-      api.listJobs({ status: filter === "ALL" ? undefined : filter, limit: 50 }),
+    queryFn: () => api.listJobs({ status: filter === "ALL" ? undefined : filter, limit: 50 }),
     refetchInterval: 5_000,
   });
 
@@ -71,9 +70,7 @@ export default function Jobs() {
             data-testid={`filter-${s.toLowerCase()}`}
             onClick={() => setFilter(s)}
             className={`text-xs px-2.5 py-1 rounded border ${
-              filter === s
-                ? "bg-accent text-accent-foreground border-accent"
-                : "border-border"
+              filter === s ? "bg-accent text-accent-foreground border-accent" : "border-border"
             }`}
           >
             {s}
@@ -94,7 +91,10 @@ export default function Jobs() {
       {!isLoading && !isError && (
         <div
           data-testid="jobs-table"
-          className="overflow-x-auto rounded-lg border border-border bg-card/30"
+          tabIndex={0}
+          role="region"
+          aria-label="Jobs table (scrollable)"
+          className="overflow-x-auto rounded-lg border border-border bg-card/30 focus:outline-none focus:ring-2 focus:ring-ring"
         >
           <table className="w-full text-sm">
             <thead className="text-left text-xs text-muted-foreground bg-muted/50">
@@ -129,7 +129,15 @@ export default function Jobs() {
                   <Td>
                     <StatusBadge status={j.status} />
                   </Td>
-                  <Td className="font-mono text-xs">{j.id.slice(0, 8)}…</Td>
+                  <Td className="font-mono text-xs">
+                    <Link
+                      to={`/jobs/${j.id}`}
+                      data-testid={`job-link-${j.id}`}
+                      className="underline-offset-2 hover:underline"
+                    >
+                      {j.id.slice(0, 8)}…
+                    </Link>
+                  </Td>
                   <Td>
                     <span className="font-mono text-xs">{j.queue}</span>
                     <span className="text-muted-foreground"> · </span>
@@ -159,12 +167,6 @@ export default function Jobs() {
 function Th({ children }: { children: React.ReactNode }) {
   return <th className="px-3 py-2 font-medium">{children}</th>;
 }
-function Td({
-  children,
-  className = "",
-}: {
-  children: React.ReactNode;
-  className?: string;
-}) {
+function Td({ children, className = "" }: { children: React.ReactNode; className?: string }) {
   return <td className={`px-3 py-2 align-middle ${className}`}>{children}</td>;
 }

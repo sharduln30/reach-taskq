@@ -16,7 +16,7 @@ RUN --mount=type=cache,target=/root/.m2 \
     mvn -f backend/pom.xml -DskipTests dependency:go-offline -B
 COPY backend backend
 RUN --mount=type=cache,target=/root/.m2 \
-    mvn -f backend/pom.xml -DskipTests -B clean package
+    mvn -f backend/pom.xml -Dmaven.test.skip=true -Djacoco.skip=true -B clean package
 
 FROM eclipse-temurin:21-jre-alpine
 RUN addgroup -S taskq && adduser -S -G taskq taskq

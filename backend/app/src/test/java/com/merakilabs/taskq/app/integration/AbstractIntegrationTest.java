@@ -21,17 +21,30 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.PostgreSQLContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 public abstract class AbstractIntegrationTest {
 
     protected static final String API_KEY = "integration-test-api-key-do-not-use-prod";
 
-    @Container
+    /**
+     * Singleton Postgres container shared by every integration test in this JVM.
+     * We do NOT rely on JUnit's {@code @Container/@Testcontainers} lifecycle because
+     * that restarts the container per test class, which causes Hikari to point at a
+     * dead JDBC port for the second class onward (Ryuk is also disabled in CI/local
+     * Colima setups, so cleanup happens at JVM shutdown anyway).
+     */
+    @SuppressWarnings("resource")
     static final PostgreSQLContainer<?> POSTGRES =
-            new PostgreSQLContainer<>("postgres:16-alpine").withDatabaseName("taskq").withUsername("taskq").withPassword("test");
+            new PostgreSQLContainer<>("postgres:16-alpine")
+                    .withDatabaseName("taskq")
+                    .withUsername("taskq")
+                    .withPassword("test")
+                    .withReuse(true);
+
+    static {
+        POSTGRES.start();
+    }
 
     @DynamicPropertySource
     static void props(final DynamicPropertyRegistry r) {

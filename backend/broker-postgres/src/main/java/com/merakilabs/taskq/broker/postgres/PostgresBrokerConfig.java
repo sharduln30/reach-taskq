@@ -1,5 +1,7 @@
 package com.merakilabs.taskq.broker.postgres;
 
+import java.time.Duration;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -12,7 +14,9 @@ public class PostgresBrokerConfig {
 
     @Bean
     public PostgresJobBroker postgresJobBroker(
-            final NamedParameterJdbcTemplate jdbc, final TransactionTemplate tx) {
-        return new PostgresJobBroker(jdbc, tx);
+            final NamedParameterJdbcTemplate jdbc,
+            final TransactionTemplate tx,
+            @Value("${taskq.worker.lease-ttl-seconds:30}") final long leaseTtlSeconds) {
+        return new PostgresJobBroker(jdbc, tx, Duration.ofSeconds(leaseTtlSeconds));
     }
 }

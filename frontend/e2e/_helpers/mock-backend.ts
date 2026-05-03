@@ -141,49 +141,62 @@ export class MockBackend {
   async install(context: BrowserContext) {
     const pth = (u: URL | string) => (typeof u === "string" ? new URL(u).pathname : u.pathname);
 
-    await context.route((url) => pth(url) === "/api/v1/info", (route) =>
-      route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({ name: "reach-taskq", version: "0.1.0", now: new Date().toISOString() }),
-      }),
+    await context.route(
+      (url) => pth(url) === "/api/v1/info",
+      (route) =>
+        route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            name: "reach-taskq",
+            version: "0.1.0",
+            now: new Date().toISOString(),
+          }),
+        }),
     );
 
-    await context.route((url) => pth(url) === "/api/v1/tenants/me", (route) =>
-      route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify(this.tenant),
-      }),
+    await context.route(
+      (url) => pth(url) === "/api/v1/tenants/me",
+      (route) =>
+        route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify(this.tenant),
+        }),
     );
 
-    await context.route((url) => /^\/api\/v1\/queues\/[^/]+\/stats$/.test(pth(url)), (route) =>
-      route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify(this.computeStats()),
-      }),
+    await context.route(
+      (url) => /^\/api\/v1\/queues\/[^/]+\/stats$/.test(pth(url)),
+      (route) =>
+        route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify(this.computeStats()),
+        }),
     );
 
-    await context.route((url) => /^\/api\/v1\/dlq\/[^/]+\/replay$/.test(pth(url)), (route, req) => {
-      if (req.method() !== "POST") return route.continue();
-      const m = pth(req.url()).match(/^\/api\/v1\/dlq\/([^/]+)\/replay$/);
-      const id = m?.[1] ?? "";
-      const job = this.dlq.get(id);
-      if (!job) return route.fulfill({ status: 404, body: '{"error":"not_found"}' });
-      job.status = "READY";
-      job.attempt = 0;
-      job.lastError = null;
-      job.updatedAt = new Date().toISOString();
-      this.dlq.delete(id);
-      this.jobs.set(id, job);
-      this.pushEvent(id, "READY", 0);
-      return route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify(job),
-      });
-    });
+    await context.route(
+      (url) => /^\/api\/v1\/dlq\/[^/]+\/replay$/.test(pth(url)),
+      (route, req) => {
+        if (req.method() !== "POST") return route.continue();
+        const m = pth(req.url()).match(/^\/api\/v1\/dlq\/([^/]+)\/replay$/);
+        const id = m?.[1] ?? "";
+        const job = this.dlq.get(id);
+        if (!job) return route.fulfill({ status: 404, body: '{"error":"not_found"}' });
+        job.status = "READY";
+        job.attempt = 0;
+        job.lastError = null;
+        job.updatedAt = new Date().toISOString();
+        this.dlq.delete(id);
+        this.jobs.set(id, job);
+        this.pushEvent(id, "READY", 0);
+        return route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify(job),
+        });
+      },
+    );
 
     await context.route(
       (url) => {
@@ -203,11 +216,13 @@ export class MockBackend {
       },
     );
 
-    await context.route((url) => /^\/api\/v1\/jobs\/[^/]+$/.test(pth(url)), (route, req) =>
-      this.handleJobItem(route, req),
+    await context.route(
+      (url) => /^\/api\/v1\/jobs\/[^/]+$/.test(pth(url)),
+      (route, req) => this.handleJobItem(route, req),
     );
-    await context.route((url) => pth(url) === "/api/v1/jobs", (route, req) =>
-      this.handleJobsCollection(route, req),
+    await context.route(
+      (url) => pth(url) === "/api/v1/jobs",
+      (route, req) => this.handleJobsCollection(route, req),
     );
   }
 
@@ -234,9 +249,7 @@ export class MockBackend {
       };
       const idempotencyKey = request.headers()["idempotency-key"];
 
-      const payloadBytes = new TextEncoder().encode(
-        JSON.stringify(body.payload),
-      ).byteLength;
+      const payloadBytes = new TextEncoder().encode(JSON.stringify(body.payload)).byteLength;
       if (payloadBytes > this.opts.payloadLimitBytes) {
         return route.fulfill({
           status: 413,

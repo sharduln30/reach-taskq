@@ -1,0 +1,387 @@
+groups:
+  - name: taskq.availability
+    interval: 15s
+    rules:
+      - alert: TaskqAppDown
+        expr: up{job="taskq-app"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          component: app
+        annotations:
+          summary: "TaskQ app target is down"
+          description: "Prometheus has been unable to scrape app:8080 for >1m. Check `docker compose ps` and `docker logs taskq-app`."
+
+      - alert: OtelCollectorDown
+        expr: up{job="otel-collector"} == 0
+        for: 2m
+        labels:
+          severity: warning
+          component: otel
+        annotations:
+          summary: "OTel collector target is down"
+          description: "Traces are not being aggregated. Check `docker logs taskq-otel`."
+
+  - name: taskq.errors
+    interval: 15s
+    rules:
+      - alert: HighFiveXxRate
+        # >0.5 5xx per second over 5m on any backend route.
+        expr: sum by (uri) (rate(http_server_requests_seconds_count{status=~"5..", uri!~"/actuator.*"}[5m])) > 0.5
+        for: 2m
+        labels:
+          severity: critical
+          component: api
+        annotations:
+          summary: "Sustained 5xx on {{ $labels.uri }}"
+          description: "5xx rate {{ $value | printf \"%.2f\" }}/s on {{ $labels.uri }} for 2m. Check `docker logs taskq-app | grep ERROR`."
+
+      - alert: AnyFiveXxBurst
+        # Any 5xx in the last minute — early-warning for the demo.
+        expr: sum(increase(http_server_requests_seconds_count{status=~"5..", uri!~"/actuator.*"}[1m])) > 5
+        for: 1m
+        labels:
+          severity: warning
+          component: api
+        annotations:
+          summary: "5xx burst detected"
+          description: "{{ $value | printf \"%.0f\" }} 5xx responses in the last 1m."
+
+      - alert: HighFourXxRate
+        # >2 4xx per second can indicate a misbehaving client or auth churn.
+        expr: sum by (uri, status) (rate(http_server_requests_seconds_count{status=~"4..", uri!~"/actuator.*"}[5m])) > 2
+        for: 5m
+        labels:
+          severity: warning
+          component: api
+        annotations:
+          summary: "Elevated {{ $labels.status }} on {{ $labels.uri }}"
+          description: "{{ $value | printf \"%.2f\" }} {{ $labels.status }}/s for 5m. Check rate-limit / auth / validation."
+
+  - name: taskq.latency
+    interval: 30s
+    rules:
+      - alert: SubmitLatencyP95High
+        expr: histogram_quantile(0.95, sum(rate(http_server_requests_seconds_bucket{uri="/v1/jobs", method="POST"}[5m])) by (le)) > 0.250
+        for: 5m
+        labels:
+          severity: warning
+          component: api
+        annotations:
+          summary: "Submit p95 latency > 250ms"
+          description: "Submit p95 = {{ $value | printf \"%.3f\" }}s for 5m. Check DB pool, GC, broker."
+
+      - alert: SubmitLatencyP99Critical
+        expr: histogram_quantile(0.99, sum(rate(http_server_requests_seconds_bucket{uri="/v1/jobs", method="POST"}[5m])) by (le)) > 1.0
+        for: 5m
+        labels:
+          severity: critical
+          component: api
+        annotations:
+          summary: "Submit p99 latency > 1s"
+          description: "Submit p99 = {{ $value | printf \"%.3f\" }}s for 5m."
+
+  - name: taskq.capacity
+    interval: 30s
+    rules:
+      - alert: HikariPoolPending
+        # Connections waiting on the pool means submits are queued behind DB.
+        expr: hikaricp_connections_pending > 0
+        for: 2m
+        labels:
+          severity: warning
+          component: db
+        annotations:
+          summary: "Hikari pool has pending waiters"
+          description: "{{ $value }} pending connection waiters for 2m. Pool is saturated; bump `spring.datasource.hikari.maximum-pool-size` or fix slow queries."
+
+      - alert: HikariPoolExhausted
+        expr: hikaricp_connections_active >= (hikaricp_connections_max - 1)
+        for: 1m
+        labels:
+          severity: critical
+          component: db
+        annotations:
+          summary: "Hikari pool effectively full"
+          description: "active = {{ $value }} (~max). Will block submits."
+
+      - alert: JvmHeapHigh
+        expr: sum(jvm_memory_used_bytes{area="heap"}) / sum(jvm_memory_max_bytes{area="heap"}) > 0.85
+        for: 5m
+        labels:
+          severity: warning
+          component: jvm
+        annotations:
+          summary: "JVM heap > 85% utilised"
+          description: "Heap utilisation {{ $value | printf \"%.0f\" }}% sustained for 5m. Investigate leak or raise -Xmx."
+
+      - alert: JvmHeapCritical
+        expr: sum(jvm_memory_used_bytes{area="heap"}) / sum(jvm_memory_max_bytes{area="heap"}) > 0.95
+        for: 2m
+        labels:
+          severity: critical
+          component: jvm
+        annotations:
+          summary: "JVM heap > 95% — OOM imminent"
+          description: "Heap utilisation {{ $value | printf \"%.0f\" }}% sustained for 2m."
+
+      - alert: ThreadCountAnomaly
+        # Vthreads should keep platform threads in the dozens. >500 suggests pinning.
+        expr: jvm_threads_live_threads > 500
+        for: 5m
+        labels:
+          severity: warning
+          component: jvm
+        annotations:
+          summary: "Live JVM threads > 500"
+          description: "{{ $value }} platform threads. Virtual threads should keep this low; investigate pinning (synchronized blocks, native code)."
+
+  - name: taskq.resources
+    interval: 30s
+    rules:
+      - alert: AppCpuHigh
+        # JVM-process CPU as fraction of available cores. >0.8 sustained = saturated.
+        expr: process_cpu_usage{job="taskq-app"} > 0.8
+        for: 5m
+        labels:
+          severity: warning
+          component: app
+        annotations:
+          summary: "App CPU > 80% for 5m"
+          description: "process_cpu_usage = {{ $value | humanizePercentage }}. Consider HPA / KEDA scale-out."
+
+      - alert: AppCpuCritical
+        expr: process_cpu_usage{job="taskq-app"} > 0.95
+        for: 2m
+        labels:
+          severity: critical
+          component: app
+        annotations:
+          summary: "App CPU > 95% for 2m"
+          description: "process_cpu_usage = {{ $value | humanizePercentage }}. Workers starving."
+
+      - alert: AppHeapHigh
+        # Heap utilisation across all heap areas. Tracks the same signal as JvmHeapHigh in taskq.capacity but more specific.
+        expr: sum(jvm_memory_used_bytes{job="taskq-app",area="heap"}) / sum(jvm_memory_max_bytes{job="taskq-app",area="heap"}) > 0.85
+        for: 5m
+        labels:
+          severity: warning
+          component: app
+        annotations:
+          summary: "App JVM heap > 85% for 5m"
+          description: "Heap utilisation {{ $value | humanizePercentage }}. Tune -Xmx or investigate leak."
+
+      - alert: PostgresConnectionsHigh
+        # Active backends approaching max_connections is the top symptom of pool issues.
+        expr: pg_stat_activity_count{state="active"} > 150
+        for: 5m
+        labels:
+          severity: warning
+          component: db
+        annotations:
+          summary: "Postgres has > 150 active backends for 5m"
+          description: "{{ $value }} active backends. Configured max_connections=200; risk of connection exhaustion."
+
+      - alert: PostgresDeadlocks
+        expr: increase(pg_stat_database_deadlocks{datname="taskq"}[10m]) > 0
+        for: 1m
+        labels:
+          severity: warning
+          component: db
+        annotations:
+          summary: "Postgres deadlocks detected"
+          description: "{{ $value | printf \"%.0f\" }} deadlocks on `taskq` in last 10m. Inspect locking patterns."
+
+      - alert: RedisMemoryHigh
+        # redis_exporter reports used memory. Configured maxmemory is 512 MiB.
+        expr: redis_memory_used_bytes / 1024 / 1024 > 400
+        for: 5m
+        labels:
+          severity: warning
+          component: redis
+        annotations:
+          summary: "Redis used memory > 400 MiB for 5m"
+          description: "{{ $value | printf \"%.0f\" }} MiB / 512 MiB max. Eviction imminent (policy=noeviction → writes will fail)."
+
+      - alert: RedisRejectedConnections
+        expr: increase(redis_rejected_connections_total[5m]) > 0
+        for: 1m
+        labels:
+          severity: warning
+          component: redis
+        annotations:
+          summary: "Redis rejected {{ $value }} connections in last 5m"
+          description: "Tune `maxclients` or investigate connection leak."
+
+      - alert: RedisStreamBacklog
+        # Redis stream length growing — producers outpacing consumers.
+        expr: redis_stream_length > 1000
+        for: 2m
+        labels:
+          severity: warning
+          component: redis
+        annotations:
+          summary: "Redis stream {{ $labels.stream }} backlog > 1000"
+          description: "{{ $value | printf \"%.0f\" }} entries pending. Workers may be down or backlogged."
+
+      - alert: HighGcPause
+        # Long GC pause sum / second indicates GC pressure (heap too small or allocation rate too high).
+        expr: rate(jvm_gc_pause_seconds_sum[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          component: jvm
+        annotations:
+          summary: "JVM GC consuming >10% of wall time"
+          description: "{{ $value | printf \"%.3f\" }}s/s spent in GC. Tune heap or allocation rate."
+
+      - alert: HostCpuHigh
+        # node-exporter: average CPU utilisation across all cores in the host (or the engine VM).
+        expr: 1 - avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) > 0.85
+        for: 5m
+        labels:
+          severity: warning
+          component: host
+        annotations:
+          summary: "Host CPU > 85% for 5m"
+          description: "Host {{ $labels.instance }} idle headroom < 15% — entire box is hot."
+
+      - alert: HostMemoryHigh
+        expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) > 0.90
+        for: 5m
+        labels:
+          severity: warning
+          component: host
+        annotations:
+          summary: "Host memory > 90% used"
+          description: "Host {{ $labels.instance }} has < 10% RAM available."
+
+  - name: taskq.queue
+    interval: 30s
+    rules:
+      - alert: QueueDepthGrowing
+        # Submits outpacing workers — ready jobs not draining.
+        expr: rate(http_server_requests_seconds_count{uri="/v1/jobs", method="POST", status=~"2.."}[5m]) > 1
+              and on() rate(http_server_requests_seconds_count{uri="/v1/jobs", method="POST", status=~"2.."}[5m])
+                  > rate(http_server_requests_seconds_count{uri="/v1/jobs/{id}", method="GET"}[5m]) * 2
+        for: 5m
+        labels:
+          severity: warning
+          component: worker
+        annotations:
+          summary: "Submit rate outpacing observable processing"
+          description: "Submit rate is more than 2x get-by-id rate for 5m. Workers may be under-scaled."
+
+      - alert: NoTrafficButErrors
+        # Worth knowing: idle stack producing errors.
+        expr: rate(http_server_requests_seconds_count[5m]) < 0.05
+              and sum(increase(http_server_requests_seconds_count{status=~"5.."}[5m])) > 0
+        for: 5m
+        labels:
+          severity: warning
+          component: api
+        annotations:
+          summary: "5xx with little traffic"
+          description: "Errors observed during a near-idle window — possibly a background task failing."
+
+  - name: taskq.quota
+    interval: 30s
+    rules:
+      - alert: RateLimitDenialsHigh
+        # Sustained 429s mean a tenant is consistently exceeding their token bucket.
+        # Either the tenant needs a higher quota, or a misbehaving client should be paged.
+        expr: sum(rate(taskq_ratelimit_decisions_total{outcome="deny"}[5m])) > 5
+        for: 5m
+        labels:
+          severity: warning
+          component: ratelimit
+        annotations:
+          summary: "Rate limiter denying > 5 req/s for 5m"
+          description: "{{ $value | printf \"%.2f\" }} denials/s. Inspect taskq_ratelimit_decisions_total by tenant."
+
+      - alert: ConcurrencyRejectionsHigh
+        # Tenant is consistently saturating its concurrency cap. Workers are healthy
+        # but the tenant is holding the fleet at its slot ceiling.
+        expr: sum(rate(taskq_concurrency_rejected_total[5m])) > 1
+        for: 5m
+        labels:
+          severity: warning
+          component: ratelimit
+        annotations:
+          summary: "Worker concurrency cap hit > 1/s for 5m"
+          description: "{{ $value | printf \"%.2f\" }} concurrency rejections/s. Tenant is yielding jobs back."
+
+      - alert: RatelimitRedisErrors
+        # Limiter Redis path is failing. With fail-open=true (default) we silently allow,
+        # which means alerts on traffic shape are unreliable until this clears.
+        expr: increase(taskq_ratelimit_errors_total[5m]) + increase(taskq_concurrency_errors_total[5m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+          component: ratelimit
+        annotations:
+          summary: "Limiter Redis errors detected"
+          description: "{{ $value | printf \"%.0f\" }} Redis errors in the last 5m. Quotas may be silently bypassed."
+
+  - name: taskq.postgres
+    interval: 60s
+    rules:
+      - alert: PostgresSlowQueryMean
+        # Average per-call latency over the busiest top-5 queries crossing 50ms.
+        # Sourced from pg_stat_statements via postgres-exporter custom queries.
+        # Filter out the maintenance / system statements (datname=taskq) so the
+        # alert is about workload SQL, not pg_stat noise.
+        expr: pg_stat_statements_mean_time_seconds{datname="taskq"} > 0.05
+        for: 5m
+        labels:
+          severity: warning
+          component: postgres
+        annotations:
+          summary: "Slow query mean > 50ms"
+          description: "Top query has mean exec time {{ $value }}s. See pg_stat_statements ORDER BY mean_exec_time DESC LIMIT 5."
+
+      - alert: PostgresSlowQueryP95
+        expr: pg_stat_statements_max_time_seconds{datname="taskq"} > 1
+        for: 5m
+        labels:
+          severity: critical
+          component: postgres
+        annotations:
+          summary: "Worst-case query > 1s"
+          description: "A pg_stat_statements row reports max exec time {{ $value }}s sustained for 5m."
+
+  - name: taskq.dlq
+    interval: 30s
+    rules:
+      - alert: DlqGrowthHigh
+        # Sustained jobs going to DEAD means a handler is failing and exhausting retries.
+        expr: sum(rate(taskq_jobs_dead_total[5m])) > 0.2
+        for: 5m
+        labels:
+          severity: warning
+          component: worker
+        annotations:
+          summary: "DLQ growing > 0.2/s for 5m"
+          description: "{{ $value | printf \"%.3f\" }} dead jobs/s. Inspect /v1/dlq and `jobs.last_error` for the failing handler."
+
+      - alert: ProcessingP95High
+        # End-to-end handler latency p95 > 5s sustained — likely DB or downstream slow.
+        expr: histogram_quantile(0.95, sum(rate(taskq_processing_duration_seconds_bucket[5m])) by (le)) > 5
+        for: 10m
+        labels:
+          severity: warning
+          component: worker
+        annotations:
+          summary: "Job processing p95 > 5s for 10m"
+          description: "Handler-side p95 = {{ $value | printf \"%.2f\" }}s. Profile slow handlers or check downstream dependencies."
+
+      - alert: LeaseReapsHigh
+        # Reaper running often means workers are crashing or stalling past lease TTL.
+        expr: sum(rate(taskq_lease_reaped_total[10m])) > 0.05
+        for: 10m
+        labels:
+          severity: warning
+          component: worker
+        annotations:
+          summary: "Lease reaps > 0.05/s for 10m"
+          description: "{{ $value | printf \"%.3f\" }} reaps/s. Workers may be OOM'ing, deadlocking, or being killed by the orchestrator."

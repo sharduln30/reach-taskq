@@ -9,6 +9,6 @@ export const ROUTES: RouteSpec[] = [
   { path: "/jobs", heading: "Jobs", navLabel: "Jobs" },
   { path: "/jobs/new", heading: "Submit job", navLabel: "Submit" },
   { path: "/dlq", heading: "Dead-letter queue", navLabel: "DLQ" },
-  { path: "/tenants", heading: "Tenants", navLabel: "Tenants" },
+  { path: "/tenants", heading: "Tenant settings", navLabel: "Tenants" },
   { path: "/workers", heading: "Workers", navLabel: "Workers" },
 ];

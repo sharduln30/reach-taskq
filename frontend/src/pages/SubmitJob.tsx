@@ -152,6 +152,7 @@ export default function SubmitJob() {
           </div>
           <textarea
             data-testid="field-payload"
+            aria-label="Payload (JSON)"
             value={payload}
             onChange={(e) => setPayload(e.target.value)}
             rows={6}

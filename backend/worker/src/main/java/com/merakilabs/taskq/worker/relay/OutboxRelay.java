@@ -6,6 +6,7 @@ import com.merakilabs.taskq.worker.config.TaskqProperties;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
@@ -87,12 +88,19 @@ public class OutboxRelay {
             if (batch.isEmpty()) {
                 return 0;
             }
+            // Bucket PUBLISH_READY into one pipelined batch (one Redis flush);
+            // SCHEDULE entries are in-memory at the broker (no remote call) and
+            // can stay in a per-element loop without a perf hit.
+            final List<JobBroker.ReadyEntry> ready = new ArrayList<>(batch.size());
             for (final Outbox.Pending p : batch) {
                 if (p.type() == Outbox.EventType.PUBLISH_READY) {
-                    broker.publishReady(p.queue(), p.jobId(), p.tenantId());
+                    ready.add(new JobBroker.ReadyEntry(p.queue(), p.jobId(), p.tenantId()));
                 } else {
                     broker.schedule(p.queue(), p.jobId(), p.tenantId(), p.runAt());
                 }
+            }
+            if (!ready.isEmpty()) {
+                broker.publishReadyBatch(ready);
             }
             final List<UUID> ids = batch.stream().map(Outbox.Pending::id).collect(Collectors.toList());
             outbox.markPublished(ids);

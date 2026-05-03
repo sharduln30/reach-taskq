@@ -10,8 +10,6 @@ import { expect, test } from "@playwright/test";
  */
 
 test.describe("job lifecycle @e2e", () => {
-  test.skip(true, "enable once BE controllers + worker handler are wired (Session 3-4)");
-
   test("submitted job reaches SUCCEEDED", async ({ page, request }) => {
     const apiBase = process.env.E2E_API_BASE ?? "http://localhost:8080";
     const apiKey = process.env.E2E_API_KEY!;
@@ -24,19 +22,25 @@ test.describe("job lifecycle @e2e", () => {
     expect(submit.status()).toBe(202);
     const { id } = (await submit.json()) as { id: string };
 
-    await page.goto(`/jobs?id=${id}`);
-    await expect(page.getByText(id)).toBeVisible();
+    await page.goto(`/jobs`);
+    await expect(page.getByTestId(`row-${id}`)).toBeVisible({ timeout: 10_000 });
 
     await expect
-      .poll(async () => {
-        const r = await request.get(`${apiBase}/v1/jobs/${id}`, {
-          headers: { "X-API-Key": apiKey },
-        });
-        const body = (await r.json()) as { status: string };
-        return body.status;
-      }, { timeout: 30_000, intervals: [500, 1000, 2000] })
+      .poll(
+        async () => {
+          const r = await request.get(`${apiBase}/v1/jobs/${id}`, {
+            headers: { "X-API-Key": apiKey },
+          });
+          const body = (await r.json()) as { status: string };
+          return body.status;
+        },
+        { timeout: 30_000, intervals: [500, 1000, 2000] },
+      )
       .toBe("SUCCEEDED");
 
-    await expect(page.getByText("SUCCEEDED")).toBeVisible({ timeout: 10_000 });
+    await page.reload();
+    await expect(page.getByTestId(`row-${id}`).getByText("SUCCEEDED")).toBeVisible({
+      timeout: 10_000,
+    });
   });
 });

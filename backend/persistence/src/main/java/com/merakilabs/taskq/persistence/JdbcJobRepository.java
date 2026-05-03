@@ -107,11 +107,23 @@ public class JdbcJobRepository implements JobRepository {
             """
             UPDATE jobs
                SET status = 'DEAD'::job_status,
+                   attempt = :attempt,
                    leased_until = NULL,
                    lease_token = NULL,
                    last_error = :error,
                    updated_at = now()
              WHERE id = :id AND status IN ('LEASED'::job_status,'FAILED'::job_status,'READY'::job_status)
+            """;
+
+    private static final String UPSERT_DLQ_REASON_SQL =
+            """
+            INSERT INTO dlq_reasons (job_id, reason, last_error, final_attempt, dead_at)
+            VALUES (:id, :reason, :error, :attempt, now())
+            ON CONFLICT (job_id) DO UPDATE
+              SET reason = EXCLUDED.reason,
+                  last_error = EXCLUDED.last_error,
+                  final_attempt = EXCLUDED.final_attempt,
+                  dead_at = EXCLUDED.dead_at
             """;
 
     private static final String TRANSITION_SQL =
@@ -127,8 +139,8 @@ public class JdbcJobRepository implements JobRepository {
             """
             SELECT count(*) FROM jobs
              WHERE status = CAST(:status AS job_status)
-               AND (:tenant IS NULL OR tenant_id = :tenant)
-               AND (:queue IS NULL OR queue = :queue)
+               AND (CAST(:tenant AS uuid) IS NULL OR tenant_id = CAST(:tenant AS uuid))
+               AND (CAST(:queue AS varchar) IS NULL OR queue = CAST(:queue AS varchar))
             """;
 
     private static final String FIND_BY_TENANT_NO_STATUS =
@@ -244,11 +256,21 @@ public class JdbcJobRepository implements JobRepository {
     }
 
     @Override
-    public boolean markDead(final JobId id, final String lastError) {
+    public boolean markDead(final JobId id, final int finalAttempt, final String lastError) {
         final var params = new MapSqlParameterSource()
                 .addValue("id", id.value())
+                .addValue("attempt", finalAttempt)
                 .addValue("error", lastError);
-        return jdbc.update(MARK_DEAD_SQL, params) > 0;
+        final boolean updated = jdbc.update(MARK_DEAD_SQL, params) > 0;
+        if (updated) {
+            final var dlqParams = new MapSqlParameterSource()
+                    .addValue("id", id.value())
+                    .addValue("reason", lastError == null ? "unknown" : lastError)
+                    .addValue("error", lastError)
+                    .addValue("attempt", finalAttempt);
+            jdbc.update(UPSERT_DLQ_REASON_SQL, dlqParams);
+        }
+        return updated;
     }
 
     @Override

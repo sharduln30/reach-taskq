@@ -34,29 +34,62 @@ public class DlqReplayService {
         this.jdbc = jdbc;
     }
 
-    @Transactional
+    /** Replay with the original payload. */
     public Job replay(final JobId id) {
+        return replay(id, null);
+    }
+
+    /**
+     * Replay a DEAD job. Resets {@code status=READY}, {@code attempt=0}, clears the lease,
+     * re-enqueues into the broker via the outbox, and appends a {@code REPLAYED} event.
+     *
+     * @param payloadOverride optional new payload (UTF-8 bytes); when non-null the job's
+     *     payload is replaced before re-enqueue. Useful for "fix-and-replay" demos where
+     *     the original payload caused the failure.
+     */
+    @Transactional
+    public Job replay(final JobId id, final byte[] payloadOverride) {
         final Job job = jobs.findById(id).orElseThrow(() -> new JobNotFoundException(id));
         if (job.status() != JobStatus.DEAD) {
             throw new IllegalStateException("Only DEAD jobs can be replayed; current=" + job.status());
         }
 
         final Instant now = Instant.now();
-        jdbc.update(
-                """
-                UPDATE jobs
-                   SET status = 'READY'::job_status,
-                       attempt = 0,
-                       last_error = NULL,
-                       leased_until = NULL,
-                       lease_token = NULL,
-                       scheduled_at = :now,
-                       updated_at = now()
-                 WHERE id = :id AND status = 'DEAD'::job_status
-                """,
-                new MapSqlParameterSource()
-                        .addValue("id", id.value())
-                        .addValue("now", java.sql.Timestamp.from(now)));
+        if (payloadOverride != null && payloadOverride.length > 0) {
+            jdbc.update(
+                    """
+                    UPDATE jobs
+                       SET status = 'READY'::job_status,
+                           attempt = 0,
+                           payload = :payload,
+                           last_error = NULL,
+                           leased_until = NULL,
+                           lease_token = NULL,
+                           scheduled_at = :now,
+                           updated_at = now()
+                     WHERE id = :id AND status = 'DEAD'::job_status
+                    """,
+                    new MapSqlParameterSource()
+                            .addValue("id", id.value())
+                            .addValue("payload", payloadOverride)
+                            .addValue("now", java.sql.Timestamp.from(now)));
+        } else {
+            jdbc.update(
+                    """
+                    UPDATE jobs
+                       SET status = 'READY'::job_status,
+                           attempt = 0,
+                           last_error = NULL,
+                           leased_until = NULL,
+                           lease_token = NULL,
+                           scheduled_at = :now,
+                           updated_at = now()
+                     WHERE id = :id AND status = 'DEAD'::job_status
+                    """,
+                    new MapSqlParameterSource()
+                            .addValue("id", id.value())
+                            .addValue("now", java.sql.Timestamp.from(now)));
+        }
 
         outbox.enqueue(
                 Outbox.EventType.PUBLISH_READY,
@@ -65,12 +98,15 @@ public class DlqReplayService {
                 job.tenantId(),
                 now);
 
+        final String detail = payloadOverride != null && payloadOverride.length > 0
+                ? "DLQ replay (payload overridden)"
+                : "DLQ replay";
         events.append(new JobEvent(
                 UUID.randomUUID(),
                 job.id(),
                 JobEvent.Type.REPLAYED,
                 0,
-                "DLQ replay",
+                detail,
                 null,
                 now));
 

@@ -2,6 +2,7 @@ package com.merakilabs.taskq.api.jobs;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.merakilabs.taskq.api.jobs.dto.ErrorResponse;
+import com.merakilabs.taskq.api.jobs.dto.JobEventResponse;
 import com.merakilabs.taskq.api.jobs.dto.JobResponse;
 import com.merakilabs.taskq.api.jobs.dto.PageResponse;
 import com.merakilabs.taskq.api.jobs.dto.SubmitJobRequest;
@@ -15,6 +16,7 @@ import com.merakilabs.taskq.core.domain.SubmitJobCommand;
 import com.merakilabs.taskq.core.domain.SubmitResult;
 import com.merakilabs.taskq.core.domain.Tenant;
 import com.merakilabs.taskq.core.error.JobNotFoundException;
+import com.merakilabs.taskq.core.port.JobEventLog;
 import com.merakilabs.taskq.core.port.JobRepository;
 import com.merakilabs.taskq.worker.config.TaskqProperties;
 import com.merakilabs.taskq.worker.submission.JobSubmissionService;
@@ -46,16 +48,19 @@ public class JobsController {
 
     private final JobSubmissionService submission;
     private final JobRepository jobs;
+    private final JobEventLog jobEvents;
     private final ObjectMapper mapper;
     private final TaskqProperties props;
 
     public JobsController(
             final JobSubmissionService submission,
             final JobRepository jobs,
+            final JobEventLog jobEvents,
             final ObjectMapper mapper,
             final TaskqProperties props) {
         this.submission = submission;
         this.jobs = jobs;
+        this.jobEvents = jobEvents;
         this.mapper = mapper;
         this.props = props;
     }
@@ -91,7 +96,7 @@ public class JobsController {
                     r.existingJob().status().name(),
                     true,
                     r.existingJob().scheduledAt()));
-            case SubmitResult.IdempotencyConflict c -> ResponseEntity.unprocessableEntity()
+            case SubmitResult.IdempotencyConflict c -> ResponseEntity.status(HttpStatus.CONFLICT)
                     .body(ErrorResponse.of(
                             "idempotency_conflict",
                             c.reason(),
@@ -115,6 +120,20 @@ public class JobsController {
                 .filter(j -> j.tenantId().equals(tenant.id()))
                 .orElseThrow(() -> new JobNotFoundException(new JobId(id)));
         return JobResponse.from(job, mapper);
+    }
+
+    @GetMapping("/{id}/events")
+    public List<JobEventResponse> events(
+            @PathVariable final UUID id,
+            @RequestParam(defaultValue = "100") final int limit) {
+        final Tenant tenant = TenantContext.currentTenant();
+        jobs.findById(new JobId(id))
+                .filter(j -> j.tenantId().equals(tenant.id()))
+                .orElseThrow(() -> new JobNotFoundException(new JobId(id)));
+        final int boundedLimit = Math.min(Math.max(limit, 1), 500);
+        return jobEvents.findByJobId(new JobId(id), boundedLimit).stream()
+                .map(JobEventResponse::from)
+                .toList();
     }
 
     @GetMapping

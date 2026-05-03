@@ -1,6 +1,8 @@
 import type {
   ApiError,
+  DlqEntry,
   Job,
+  JobEventLogRow,
   PageResponse,
   QueueStats,
   SubmitJobRequest,
@@ -35,11 +37,7 @@ export class ApiClientError extends Error {
   }
 }
 
-async function request<T>(
-  path: string,
-  init: RequestInit = {},
-  rawJson = false,
-): Promise<T> {
+async function request<T>(path: string, init: RequestInit = {}, rawJson = false): Promise<T> {
   const headers = new Headers(init.headers);
   headers.set("X-API-Key", getApiKey());
   if (init.body && !headers.has("Content-Type")) {
@@ -53,11 +51,7 @@ async function request<T>(
     } catch {
       // ignore parse failures, surface raw status
     }
-    throw new ApiClientError(
-      res.status,
-      payload?.message ?? `HTTP ${res.status}`,
-      payload,
-    );
+    throw new ApiClientError(res.status, payload?.message ?? `HTTP ${res.status}`, payload);
   }
   if (rawJson) return (await res.json()) as T;
   if (res.status === 204) return undefined as T;
@@ -69,6 +63,19 @@ export const api = {
   health: () => request<{ status: string }>("/actuator/health"),
   info: () => request<{ name: string; version: string; now: string }>("/v1/info"),
   me: () => request<TenantInfo>("/v1/tenants/me"),
+  updateMe: (
+    body: Partial<{
+      name: string;
+      rateLimitRps: number;
+      rateLimitBurst: number;
+      maxConcurrency: number;
+      active: boolean;
+    }>,
+  ) =>
+    request<TenantInfo>("/v1/tenants/me", {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
   submit: (body: SubmitJobRequest, idempotencyKey?: string) =>
     request<SubmitJobResponse>("/v1/jobs", {
       method: "POST",
@@ -76,6 +83,8 @@ export const api = {
       body: JSON.stringify(body),
     }),
   job: (id: string) => request<Job>(`/v1/jobs/${id}`),
+  jobEvents: (id: string, limit = 100) =>
+    request<JobEventLogRow[]>(`/v1/jobs/${id}/events?limit=${limit}`),
   listJobs: (params: { status?: string; limit?: number; offset?: number } = {}) => {
     const u = new URLSearchParams();
     if (params.status) u.set("status", params.status);
@@ -89,10 +98,14 @@ export const api = {
     if (params.limit) u.set("limit", String(params.limit));
     if (params.offset) u.set("offset", String(params.offset));
     const qs = u.toString();
-    return request<PageResponse<Job>>(`/v1/dlq${qs ? `?${qs}` : ""}`);
+    return request<PageResponse<DlqEntry>>(`/v1/dlq${qs ? `?${qs}` : ""}`);
   },
-  replay: (id: string) =>
-    request<Job>(`/v1/dlq/${id}/replay`, { method: "POST" }),
-  queueStats: (name: string) =>
-    request<QueueStats>(`/v1/queues/${encodeURIComponent(name)}/stats`),
+  replay: (id: string, payloadOverride?: unknown) =>
+    request<Job>(`/v1/dlq/${id}/replay`, {
+      method: "POST",
+      headers: payloadOverride !== undefined ? { "Content-Type": "application/json" } : {},
+      body:
+        payloadOverride !== undefined ? JSON.stringify({ payload: payloadOverride }) : undefined,
+    }),
+  queueStats: (name: string) => request<QueueStats>(`/v1/queues/${encodeURIComponent(name)}/stats`),
 };

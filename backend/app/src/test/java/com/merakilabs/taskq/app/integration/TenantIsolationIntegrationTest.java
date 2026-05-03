@@ -13,12 +13,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.testcontainers.junit.jupiter.Testcontainers;
 
-@Testcontainers
 class TenantIsolationIntegrationTest extends AbstractIntegrationTest {
-
-    private static final String OTHER_KEY = "other-tenant-api-key-integration-01";
 
     @Autowired
     private TenantRepository tenants;
@@ -30,17 +26,18 @@ class TenantIsolationIntegrationTest extends AbstractIntegrationTest {
         assertThat(post.getStatusCode()).isEqualTo(HttpStatus.ACCEPTED);
         final UUID jobId = UUID.fromString(objectMapper.readTree(post.getBody()).path("id").asText());
 
+        final String otherKey = "other-tenant-api-key-" + UUID.randomUUID();
         tenants.insert(new Tenant(
                 new TenantId(UUID.randomUUID()),
                 "other-" + UUID.randomUUID(),
-                ApiKeyHasher.hash(OTHER_KEY),
+                ApiKeyHasher.hash(otherKey),
                 100,
                 200,
                 50,
                 true,
                 Instant.now()));
 
-        final ResponseEntity<String> foreign = getJobRaw(jobId, OTHER_KEY);
+        final ResponseEntity<String> foreign = getJobRaw(jobId, otherKey);
         assertThat(foreign.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
         final JsonNode err = objectMapper.readTree(foreign.getBody());
         assertThat(err.path("error").asText()).isEqualTo("not_found");

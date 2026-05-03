@@ -11,6 +11,7 @@ const API_BASE = process.env.E2E_API_BASE ?? "http://localhost:8080";
 
 export default defineConfig({
   testDir: "./e2e/full",
+  testIgnore: process.env.E2E_SCREENSHOTS ? [] : ["**/readme-screenshots.e2e.spec.ts"],
   fullyParallel: false,
   retries: process.env.CI ? 1 : 0,
   workers: 1,

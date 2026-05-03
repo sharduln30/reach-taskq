@@ -9,9 +9,7 @@ import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.testcontainers.junit.jupiter.Testcontainers;
 
-@Testcontainers
 class JobWorkflowIntegrationTest extends AbstractIntegrationTest {
 
     @Test
@@ -29,7 +27,10 @@ class JobWorkflowIntegrationTest extends AbstractIntegrationTest {
         assertThat(dlqPage.path("total").asLong()).isGreaterThanOrEqualTo(1);
 
         final ResponseEntity<String> replay = rest.exchange(
-                "/v1/dlq/" + id + "/replay", HttpMethod.POST, new HttpEntity<>(jsonHeaders()), String.class);
+                "/v1/dlq/" + id + "/replay",
+                HttpMethod.POST,
+                new HttpEntity<>("{\"payload\":{\"outcome\":\"success\"}}", jsonHeaders()),
+                String.class);
         assertThat(replay.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(objectMapper.readTree(replay.getBody()).path("status").asText()).isEqualTo("READY");
         drainUntilStatus(id, "SUCCEEDED");

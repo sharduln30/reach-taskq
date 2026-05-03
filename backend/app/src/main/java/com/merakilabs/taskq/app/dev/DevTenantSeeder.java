@@ -13,6 +13,7 @@ import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
  * Seeds a default tenant on startup so the dashboard / Playwright tests have something to talk to.
@@ -38,6 +39,7 @@ public class DevTenantSeeder implements ApplicationRunner {
     }
 
     @Override
+    @Transactional
     public void run(final ApplicationArguments args) {
         final String hash = ApiKeyHasher.hash(seedKey);
         if (tenants.findByApiKeyHash(hash).isPresent()) {

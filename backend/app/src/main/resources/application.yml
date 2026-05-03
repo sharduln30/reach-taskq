@@ -9,13 +9,14 @@ spring:
     username: ${POSTGRES_USER:taskq}
     password: ${POSTGRES_PASSWORD:taskq_dev_pw}
     hikari:
-      maximum-pool-size: 20
-      minimum-idle: 5
+      maximum-pool-size: ${TASKQ_HIKARI_MAX:50}
+      minimum-idle: ${TASKQ_HIKARI_MIN:10}
       pool-name: taskq-hikari
-      auto-commit: false
+      auto-commit: true
       connection-timeout: 5000
       validation-timeout: 2000
       max-lifetime: 1800000
+      leak-detection-threshold: 60000
   flyway:
     enabled: true
     baseline-on-migrate: false
@@ -33,6 +34,11 @@ server:
   error:
     include-message: always
     include-binding-errors: always
+  tomcat:
+    threads:
+      max: ${TASKQ_TOMCAT_MAX_THREADS:200}
+    max-connections: ${TASKQ_TOMCAT_MAX_CONNECTIONS:400}
+    accept-count: ${TASKQ_TOMCAT_ACCEPT_COUNT:50}
 
 management:
   endpoints:
@@ -74,6 +80,14 @@ taskq:
     concurrency: ${TASKQ_WORKER_CONCURRENCY:64}
     lease-ttl-seconds: ${TASKQ_LEASE_TTL_SECONDS:30}
     lease-reaper-interval-seconds: ${TASKQ_LEASE_REAPER_INTERVAL_SECONDS:10}
+    tenant-cache-ttl-seconds: ${TASKQ_WORKER_TENANT_CACHE_TTL_SECONDS:30}
+  ratelimit:
+    enabled: ${TASKQ_RATELIMIT_ENABLED:true}
+    fail-open: ${TASKQ_RATELIMIT_FAIL_OPEN:true}
+    redis-timeout-ms: ${TASKQ_RATELIMIT_REDIS_TIMEOUT_MS:50}
+  concurrency:
+    enabled: ${TASKQ_CONCURRENCY_ENABLED:true}
+    yield-delay-ms: ${TASKQ_CONCURRENCY_YIELD_DELAY_MS:100}
   outbox:
     poll-interval-ms: ${TASKQ_OUTBOX_POLL_INTERVAL_MS:200}
     batch-size: 200

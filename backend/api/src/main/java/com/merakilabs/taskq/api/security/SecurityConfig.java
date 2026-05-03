@@ -1,6 +1,10 @@
 package com.merakilabs.taskq.api.security;
 
+import com.merakilabs.taskq.core.port.RateLimiter;
 import com.merakilabs.taskq.core.port.TenantRepository;
+import jakarta.servlet.http.HttpServletResponse;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
@@ -17,8 +21,19 @@ public class SecurityConfig {
     }
 
     @Bean
+    public RequestIdFilter requestIdFilter() {
+        return new RequestIdFilter();
+    }
+
+    @Bean
     public SecurityFilterChain securityFilterChain(
-            final HttpSecurity http, final ApiKeyAuthenticationFilter apiKeyFilter) throws Exception {
+            final HttpSecurity http,
+            final ApiKeyAuthenticationFilter apiKeyFilter,
+            final RequestIdFilter requestIdFilter,
+            final ObjectProvider<RateLimiter> rateLimiterProvider,
+            @Value("${taskq.ratelimit.redis-timeout-ms:50}") final long timeoutMs,
+            @Value("${taskq.ratelimit.fail-open:true}") final boolean failOpen)
+            throws Exception {
         http
             .csrf(csrf -> csrf.disable())
             .cors(c -> {})
@@ -40,7 +55,25 @@ public class SecurityConfig {
                     .permitAll())
             .formLogin(f -> f.disable())
             .httpBasic(b -> b.disable())
+            .anonymous(a -> a.disable())
+            .exceptionHandling(eh -> eh
+                    .authenticationEntryPoint((req, res, ex) -> {
+                        res.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+                        res.setHeader("WWW-Authenticate", "ApiKey realm=\"reach-taskq\"");
+                    })
+                    .accessDeniedHandler((req, res, ex) -> {
+                        res.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+                        res.setHeader("WWW-Authenticate", "ApiKey realm=\"reach-taskq\"");
+                    }))
+            .addFilterBefore(requestIdFilter, UsernamePasswordAuthenticationFilter.class)
             .addFilterBefore(apiKeyFilter, UsernamePasswordAuthenticationFilter.class);
+
+        final RateLimiter rl = rateLimiterProvider.getIfAvailable();
+        if (rl != null) {
+            http.addFilterBefore(
+                    new TenantRateLimitFilter(rl, timeoutMs, failOpen),
+                    UsernamePasswordAuthenticationFilter.class);
+        }
         return http.build();
     }
 }

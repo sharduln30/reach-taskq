@@ -45,16 +45,33 @@ to make the suite deterministic without sleeping.
 
 | Class | Scenarios |
 | ----- | --------- |
-| `JobsApiIntegrationTest` | missing `X-API-Key` → 401; submit echo `success` → drains to `SUCCEEDED`; idempotency replay → 200; idempotency payload mismatch → 422; `runAt` future → `SCHEDULED`; list jobs / queue stats / `tenants/me` 200 |
+| `JobsApiIntegrationTest` | missing `X-API-Key` → 401; submit echo `success` → drains to `SUCCEEDED`; idempotency replay → 200; idempotency payload mismatch → 409; `runAt` future → `SCHEDULED`; list jobs / queue stats / `tenants/me` 200 |
 | `JobWorkflowIntegrationTest` | `outcome:fail` + `maxAttempts:1` → `DEAD`, list DLQ, `POST /v1/dlq/{id}/replay` → drains to `SUCCEEDED`; `outcome:flap, passOn:2` → eventually `SUCCEEDED` |
 | `TenantIsolationIntegrationTest` | second tenant via `TenantRepository`; foreign `GET /v1/jobs/{id}` → 404 |
 | `PayloadAndValidationIntegrationTest` | `@TestPropertySource(taskq.payload.max-bytes=64)` → 413; bad queue pattern → 400 |
 
 ```bash
-export JAVA_HOME=$(/usr/libexec/java_home -v 21+)
-docker info >/dev/null  # Testcontainers requires Docker
-cd backend && mvn -pl app -Djacoco.skip=true test
+export JAVA_HOME=$(/usr/libexec/java_home -v 22)
+export PATH=$JAVA_HOME/bin:$PATH
+
+# On Colima, point Docker / Testcontainers at the right socket and disable Ryuk
+# (Ryuk can't bind-mount /var/run/docker.sock under Colima's filesystem driver).
+export DOCKER_HOST=unix://$HOME/.colima/default/docker.sock
+export TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock
+export TESTCONTAINERS_RYUK_DISABLED=true
+
+# Optional: point ratelimit module at the running compose Redis to avoid
+# spinning up a per-suite Testcontainers Redis.
+export TEST_REDIS_HOST=localhost TEST_REDIS_PORT=6379
+
+docker info >/dev/null
+cd backend && mvn -B -pl core,ratelimit,app -am -Djacoco.skip=true test
 ```
+
+> The Postgres Testcontainer now uses the **singleton container pattern** in
+> `AbstractIntegrationTest` (started once per test JVM, `withReuse(true)`). Do
+> not re-add `@Testcontainers` to subclasses — it tears the shared container
+> down between classes and produces "Connection is closed" failures.
 
 ## Layer 3 — frontend Playwright (no BE)
 
@@ -112,9 +129,54 @@ cd frontend && npm run test:e2e:full
 
 Tests live under `frontend/e2e/full/*.e2e.spec.ts`.
 
+## Layer 5 — full integrated test pass (release gate)
+
+End-to-end shake-down across every layer above, plus stress + observability +
+UX. Outputs a single, reproducible report.
+
+```bash
+# 1. boot the stack and wait for /actuator/health
+docker compose -f docker/docker-compose.yml up -d
+bash scripts/seed-tenants.sh
+
+# 2. backend (29 tests across core / ratelimit / app, Testcontainers Postgres)
+export JAVA_HOME=$(/usr/libexec/java_home -v 22) PATH=$JAVA_HOME/bin:$PATH
+export DOCKER_HOST=unix://$HOME/.colima/default/docker.sock
+export TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock
+export TESTCONTAINERS_RYUK_DISABLED=true
+export TEST_REDIS_HOST=localhost TEST_REDIS_PORT=6379
+cd backend && mvn -B -pl core,ratelimit,app -am test && cd ..
+
+# 3. functional API (direct + nginx proxy)
+for folder in '1 · Health' '2 · Tenant' '3 · Jobs · Happy path' \
+              '4 · Jobs · Idempotency' '5 · Jobs · Retry & DLQ' \
+              '6 · Jobs · Scheduled' '7 · Queue stats'; do
+  newman run postman/reach-taskq.postman_collection.json \
+    -e postman/reach-taskq.postman_environment.json --folder "$folder"
+done
+
+# 4. stress
+TOTAL=2000 CONCURRENCY=64 bash postman/curl-bombard.sh
+ITERATIONS=2 PARALLEL=2 CONCURRENCY=20 OPS=80 bash postman/run-stress.sh fail
+k6 run --duration 60s --vus 20 load/baseline.js
+
+# 5. frontend
+cd frontend && npm ci && npx playwright install --with-deps chromium
+npm run lint && npx prettier --check .
+npm run test:e2e
+E2E_BASE_URL=http://localhost:3000 E2E_API_BASE=http://localhost:8080 \
+E2E_API_KEY=demo-api-key-do-not-use-in-prod npm run test:e2e:full
+```
+
+Each run drops Surefire / Newman / curl-bombard / k6 / Playwright HTML
+artefacts under `tests/.runs/<timestamp>/` (gitignored — local only).
+
 ## CI
 
 GitHub Actions matrix: backend unit + integration on push; FE Playwright (layer 3) on push;
 FE full E2E (layer 4) on `main` + nightly. Trace + video artifacts uploaded on failure.
 
-See [`.github/workflows/test.yml`](../.github/workflows/test.yml) for the full pipeline.
+The pipeline currently lives at
+[`.ci-workflows/test.yml`](../.ci-workflows/test.yml) — move it to
+`.github/workflows/test.yml` (or push with a token that carries the `workflow`
+scope) before Actions will pick it up.

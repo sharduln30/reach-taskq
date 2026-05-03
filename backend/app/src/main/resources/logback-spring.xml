@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration scan="true" scanPeriod="30 seconds">
+    <!--
+      Two appender modes selected by Spring profile:
+        - default (no profile or local) → human-readable colourised text on stdout
+        - prod / k8s → single-line JSON via LogstashEncoder so log aggregators
+          (Loki, ELK, OpenSearch, Cloudwatch agents) can parse fields directly.
+
+      MDC fields propagated automatically:
+        - tenant_id   (set by ApiKeyAuthenticationFilter)
+        - request_id  (set by RequestIdFilter)
+        - traceId / spanId (set by Micrometer Tracing → OTel bridge)
+    -->
+
+    <conversionRule conversionWord="clr" converterClass="org.springframework.boot.logging.logback.ColorConverter"/>
+    <conversionRule conversionWord="wex" converterClass="org.springframework.boot.logging.logback.WhitespaceThrowableProxyConverter"/>
+    <conversionRule conversionWord="wEx" converterClass="org.springframework.boot.logging.logback.ExtendedWhitespaceThrowableProxyConverter"/>
+
+    <property name="CONSOLE_LOG_PATTERN"
+              value="%clr(%d{HH:mm:ss.SSS}){faint} %clr(%-5level) %clr([%X{tenant_id:-}/%X{request_id:-}]){magenta} %clr(${PID:- }){faint} --- %clr([%t]){faint} %clr(%-40.40logger{39}){cyan} : %m%n%wEx"/>
+
+    <springProfile name="!prod &amp; !k8s">
+        <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+            <encoder>
+                <pattern>${CONSOLE_LOG_PATTERN}</pattern>
+            </encoder>
+        </appender>
+        <root level="INFO">
+            <appender-ref ref="STDOUT"/>
+        </root>
+    </springProfile>
+
+    <springProfile name="prod | k8s">
+        <appender name="JSON" class="ch.qos.logback.core.ConsoleAppender">
+            <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+                <fieldNames>
+                    <timestamp>ts</timestamp>
+                    <level>level</level>
+                    <thread>thread</thread>
+                    <logger>logger</logger>
+                    <message>msg</message>
+                    <stackTrace>stack</stackTrace>
+                </fieldNames>
+                <customFields>{"service":"reach-taskq"}</customFields>
+                <includeMdcKeyName>tenant_id</includeMdcKeyName>
+                <includeMdcKeyName>request_id</includeMdcKeyName>
+                <includeMdcKeyName>traceId</includeMdcKeyName>
+                <includeMdcKeyName>spanId</includeMdcKeyName>
+                <includeMdcKeyName>job_id</includeMdcKeyName>
+            </encoder>
+        </appender>
+        <root level="INFO">
+            <appender-ref ref="JSON"/>
+        </root>
+    </springProfile>
+
+    <logger name="com.merakilabs.taskq" level="${TASKQ_LOG_LEVEL:-DEBUG}"/>
+    <logger name="org.hibernate.SQL" level="WARN"/>
+    <logger name="org.springframework.jdbc.core" level="WARN"/>
+</configuration>

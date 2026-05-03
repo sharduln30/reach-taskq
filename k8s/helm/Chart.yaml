@@ -1,0 +1,17 @@
+apiVersion: v2
+name: reach-taskq
+description: Distributed task queue & job-processing platform (Spring Boot 3 + Postgres + Redis Streams).
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+home: https://github.com/sharduln30/reach-taskq
+sources:
+  - https://github.com/sharduln30/reach-taskq
+maintainers:
+  - name: reach-taskq
+keywords:
+  - taskqueue
+  - jobqueue
+  - spring-boot
+  - postgres
+  - redis

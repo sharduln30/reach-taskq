@@ -7,9 +7,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.test.context.TestPropertySource;
-import org.testcontainers.junit.jupiter.Testcontainers;
 
-@Testcontainers
 @TestPropertySource(properties = "taskq.payload.max-bytes=64")
 class PayloadAndValidationIntegrationTest extends AbstractIntegrationTest {
 

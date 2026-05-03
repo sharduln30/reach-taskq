@@ -11,4 +11,10 @@ public interface TenantRepository {
     Optional<Tenant> findById(TenantId id);
 
     Optional<Tenant> findByApiKeyHash(String apiKeyHash);
+
+    /**
+     * Persist updated quota / status fields on an existing tenant. Returns the updated row.
+     * Throws if no tenant exists with the given id.
+     */
+    Tenant update(Tenant tenant);
 }

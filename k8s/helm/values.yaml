@@ -1,0 +1,70 @@
+image:
+  repository: ghcr.io/sharduln30/reach-taskq
+  tag: 0.1.0
+  pullPolicy: IfNotPresent
+
+api:
+  replicas: 2
+  resources:
+    requests: { cpu: 250m, memory: 512Mi }
+    limits:   { cpu: 1000m, memory: 1Gi }
+  service:
+    type: ClusterIP
+    port: 80
+    targetPort: 8080
+  workerEnabled: false   # API pods do not lease jobs by default
+
+worker:
+  replicas: 2
+  resources:
+    requests: { cpu: 500m, memory: 768Mi }
+    limits:   { cpu: 2000m, memory: 2Gi }
+  workerEnabled: true    # worker pods lease & dispatch jobs
+  concurrency: 64
+
+postgres:
+  host: postgres-primary.databases.svc
+  port: 5432
+  db: taskq
+  existingSecret: taskq-postgres   # keys: username, password
+
+redis:
+  host: redis-master.cache.svc
+  port: 6379
+  existingSecret: ""               # optional; keys: password
+
+broker: redis                      # postgres | redis
+
+leaseTtlSeconds: 30
+leaseReaperIntervalSeconds: 10
+outboxPollIntervalMs: 200
+schedulerPollIntervalMs: 500
+defaultMaxAttempts: 5
+backoffBaseMs: 1000
+backoffMaxMs: 300000
+idempotencyTtlHours: 24
+payloadMaxBytes: 1048576
+
+otel:
+  endpoint: http://otel-collector.observability.svc:4317
+  serviceName: reach-taskq
+
+# KEDA-driven worker autoscaling. The trigger watches Postgres `ready` job count
+# (broker-agnostic: works for both Redis and Postgres backends). For Redis-only
+# deployments switch to the redis-streams scaler (see k8s/manifests/keda-redis.yaml).
+autoscaling:
+  enabled: true
+  minReplicas: 1
+  maxReplicas: 20
+  pollingInterval: 15
+  cooldownPeriod: 60
+  trigger:
+    type: postgresql
+    targetReadyJobs: 50
+    secretName: taskq-postgres   # KEDA reads connection from this secret
+
+ingress:
+  enabled: false
+  className: nginx
+  host: taskq.example.com
+  tls: []

@@ -33,6 +33,11 @@ export interface PageResponse<T> {
   total: number;
 }
 
+export interface DlqEntry extends Job {
+  reason: string | null;
+  deadAt: string | null;
+}
+
 export interface SubmitJobRequest {
   queue: string;
   type: string;
@@ -86,4 +91,14 @@ export interface JobStatusEvent {
   status: JobStatus;
   attempt: number;
   updatedAt: string;
+}
+
+export interface JobEventLogRow {
+  id: string;
+  jobId: string;
+  type: string;
+  attempt: number;
+  details: string | null;
+  traceId: string | null;
+  occurredAt: string;
 }

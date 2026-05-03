@@ -72,10 +72,15 @@ public class PostgresJobBroker implements JobBroker {
 
     private final NamedParameterJdbcTemplate jdbc;
     private final TransactionTemplate tx;
+    private final Duration leaseTtl;
 
-    public PostgresJobBroker(final NamedParameterJdbcTemplate jdbc, final TransactionTemplate tx) {
+    public PostgresJobBroker(
+            final NamedParameterJdbcTemplate jdbc,
+            final TransactionTemplate tx,
+            final Duration leaseTtl) {
         this.jdbc = jdbc;
         this.tx = tx;
+        this.leaseTtl = leaseTtl;
     }
 
     @Override
@@ -101,7 +106,7 @@ public class PostgresJobBroker implements JobBroker {
 
     private List<Delivery> leaseBatch(final QueueName queue, final int maxBatch) {
         final LeaseToken token = LeaseToken.generate();
-        final Instant leasedUntil = Instant.now().plus(Duration.ofSeconds(30));
+        final Instant leasedUntil = Instant.now().plus(leaseTtl);
         final List<Delivery> deliveries = new ArrayList<>();
 
         Boolean ok = tx.execute(status -> {

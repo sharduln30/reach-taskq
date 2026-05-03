@@ -87,13 +87,13 @@ scripts/            seed + demo helpers
 
 | Class | Scenarios |
 | ----- | --------- |
-| `JobsApiIntegrationTest` | missing `X-API-Key` → 401; submit echo `success` → drains to `SUCCEEDED`; idempotency replay → 200; idempotency payload mismatch → 422; `runAt` future → `SCHEDULED`; list jobs / queue stats / tenants/me 200 |
+| `JobsApiIntegrationTest` | missing `X-API-Key` → 401; submit echo `success` → drains to `SUCCEEDED`; idempotency replay → 200; idempotency payload mismatch → 409; `runAt` future → `SCHEDULED`; list jobs / queue stats / tenants/me 200 |
 | `JobWorkflowIntegrationTest` | `outcome:fail` + `maxAttempts:1` → `DEAD`, list DLQ, replay → drains to `SUCCEEDED`; `outcome:flap, passOn:2` → eventually `SUCCEEDED` |
 | `TenantIsolationIntegrationTest` | second tenant inserted via `TenantRepository`; foreign `GET /v1/jobs/{id}` → 404 |
 | `PayloadAndValidationIntegrationTest` | `@TestPropertySource(taskq.payload.max-bytes=64)` → 413; bad queue pattern → 400 |
 
 Common base: `AbstractIntegrationTest`
-- `@SpringBootTest(RANDOM_PORT)` (no `@Testcontainers` on the abstract — concrete classes annotate themselves so Spring can boot)
+- `@SpringBootTest(RANDOM_PORT)` on the abstract; the Postgres `Testcontainer` is started once per JVM in a `static` initializer with `withReuse(true)` (singleton container pattern). Concrete subclasses must NOT re-add `@Testcontainers` — that re-asserts ownership of the lifecycle and tears the shared container down between classes (causes `Connection is closed` mid-suite).
 - Static `PostgreSQLContainer` + `@DynamicPropertySource` overriding JDBC URL/user/pass, `taskq.broker=postgres`, fast outbox/scheduler intervals, long lease-reaper interval, tight retry backoff, dev tenant seed with fixed `API_KEY`.
 - Helpers: `jsonHeaders()`, `postSubmit`, `getJobRaw`, `drainUntilStatus(jobId, expected)`.
 
@@ -144,20 +144,166 @@ docker compose -f docker/docker-compose.yml up -d
 
 ---
 
-## 6. Open work / TODOs (deliberately deferred)
+## 6. Production wiring (now complete)
 
-- Wire `broker-redis` (Redis Streams XADD / XREADGROUP / XACK) and switch
-  default broker via `taskq.broker=redis`.
-- KEDA `ScaledObject` in `k8s/` keyed off Postgres `ready` count (or Redis stream lag).
-- k6 load script (`load/`) for sustained-throughput chart.
-- Coralogix / Datadog wiring is intentionally **NOT** added — keep zero-paid SLA.
+- ✅ **`broker-redis`** — `RedisJobBroker` (Lettuce) with `XADD` / `XREADGROUP NOACK` /
+  consumer-group create-on-publish. Postgres remains the lease source-of-truth;
+  Redis is pure transport. Wired via `RedisBrokerConfig` (`@ConditionalOnProperty
+  taskq.broker=redis`). Switch via `TASKQ_BROKER=redis` (default in `.env.example`).
+- ✅ **k8s/helm/** — Helm chart with split api / worker Deployments,
+  Service, PDBs, Ingress (gated), KEDA `ScaledObject` (Postgres-query scaler by
+  default; redis-streams scaler available via `autoscaling.trigger.type`).
+- ✅ **load/baseline.js** — k6 script: ramping stages, MIX env (success / fail / flap / mixed),
+  `submit_latency_ms` Trend with p95<250ms / p99<500ms thresholds, error counter <1%.
+- ✅ **docker/grafana/dashboards/taskq-overview.json** — provisioned dashboard
+  (submit RPS, submit p95, JVM threads, heap, HTTP request/latency by URI,
+  Hikari pool, 5xx rate).
+- ✅ **scripts/seed-tenants.sh** + **scripts/demo-traffic.sh** — operator-facing
+  helpers referenced by the Quick Start.
+
+### Production fixes baked in
+- Hikari `auto-commit: true` (was `false` — silently dropped non-transactional
+  writes including `DevTenantSeeder.insert(tenant)`).
+- `JdbcJobRepository.COUNT_BY_STATUS` — `CAST(:tenant AS uuid)` /
+  `CAST(:queue AS varchar)` so nullable bind params don't trip
+  `could not determine data type of parameter $4`.
+- `app.Dockerfile` build flag flipped to `-Dmaven.test.skip=true` (was
+  `-DskipTests` which still triggered test compilation).
+
+### Verified (live, single host: Colima docker engine)
+- 7 containers up: postgres, redis, app, frontend, prometheus, grafana, otel-collector.
+- 8 E2E scenarios pass through `TASKQ_BROKER=redis`: success, flap (3 attempts),
+  terminal-fail → DLQ, idempotent replay (200) + payload-mismatch (409),
+  DLQ list + replay round-trip, scheduled-runAt, lease reaper recovers a
+  manually-stuck `LEASED` row (REAPED → re-LEASED → SUCCEEDED).
+- k6 baseline: 433 req/s sustained over 30s, 0 errors, p95=40ms, p99=232ms;
+  drain to 0 lag in Redis stream after load stops.
+- Frontend Playwright: 77 passed across desktop-chrome / tablet / mobile
+  (smoke + nav + responsive + a11y + mock-integration).
+
+### Still deliberately out-of-scope
+- Coralogix / Datadog wiring — keep zero-paid SLA.
 
 ---
 
-## 7. Past chat reference
+## 7. Distribution model
+
+This is a horizontally-scalable single-binary service. Coordination always
+goes through Postgres or Redis — no in-process leader, no JVM-local queue, no
+sticky shard. Concretely:
+
+- **Submit path.** API process commits `jobs` + `idempotency_keys` + `outbox`
+  in one Postgres tx. ACID. Returns 202 immediately; the caller never blocks
+  on the broker.
+- **Outbox relay.** A loop reads unpublished outbox rows, ships them to the
+  broker (`broker-redis` by default, `broker-postgres` as fallback), then
+  marks them published. Crash between ship and mark = duplicate publish
+  (harmless because…).
+- **Worker.** Pulls from broker, then runs a conditional `lease()` on
+  Postgres (`WHERE status='READY'`). The first worker wins; everyone else
+  bounces. After the handler returns, the only Postgres write is a
+  conditional transition (`SUCCEEDED` / `RETRY_SCHEDULED` / `DEAD`).
+- **Lease reaper.** Independent loop catches expired leases (worker crash,
+  GC pause, network partition) and bumps `attempt`.
+- **Concurrency semaphore.** Redis ZSET (Lua-backed) holds the in-flight
+  set per tenant. TTL'd; the reaper prunes orphans.
+- **WS broadcast.** App-side `JobStatusBroadcaster` (was `pg_notify` until
+  V2 migration). Tenant-scoped. Best-effort — never blocks the worker.
+
+**Why this matters operationally.** You can run N app processes behind a
+load balancer with no extra config. They all share the same Postgres + Redis
+and use Postgres' MVCC + Redis' single-threadedness for serialization.
+Kubernetes-friendly: liveness = `/actuator/health/liveness`, readiness =
+`/actuator/health/readiness` (latter checks Postgres + Redis), graceful
+shutdown drains in-flight jobs before SIGKILL.
+
+### CAP posture
+- **CP for state** (Postgres holds jobs / outbox / idempotency / dlq). A
+  Postgres outage = no submit, no processing, no replay. We hard-fail rather
+  than risk losing or duplicating a job's effect.
+- **AP for transport & coordination** (Redis Streams, Redis token bucket,
+  Redis ZSET semaphore). A Redis outage = outbox piles up (durable),
+  rate-limit fails open by default, workers stop pulling. On recovery the
+  relay drains the backlog with one pipelined batch and we resume.
+- **At-least-once + idempotent handlers** is the contract. Handler authors
+  MUST treat retries as normal — the framework will redeliver on broker
+  failover, lease expiry, or relay crash. Use the job's
+  `idempotency_key` (already validated on submit) or the job id as the
+  natural dedup key inside your handler.
+
+Full per-store CAP table + failure-mode walkthrough is captured in the
+project working notes (Postgres = CP, Redis Streams = AP for transport,
+Redis-backed limiters = AP fail-open).
+
+---
+
+## 8. Performance gotchas (and what we did about them)
+
+These bit us during the audit; they're the kind of thing a reviewer is
+likely to ask about.
+
+1. **`pg_notify` trigger serialized every status change.** Every INSERT into
+   `jobs` fired a `NOTIFY`, and Postgres serializes notifications on a
+   per-database queue lock — so 50 concurrent submits queue up on
+   `wait_event=Lock|object`. Removed the trigger in V2; status changes are
+   now broadcast app-side via `JobStatusBroadcaster`.
+2. **HikariCP at 20 connections.** Hard cap during a burst, with the worker
+   loop and the relay loop competing with the submit path. Bumped to 50
+   (config-driven via `TASKQ_HIKARI_MAX`) and added leak detection.
+3. **`org.springframework.jdbc.core` at DEBUG.** Single biggest overhead in
+   the original profile — a sync log line per row. Demoted to WARN in
+   `application-local.yml`.
+4. **Synchronous WAL fsync on the dev VM.** Colima's overlay fs makes fsync
+   slow enough that submit p95 was ~6s before any change. We set
+   `synchronous_commit=off, wal_writer_delay=10ms` on the Postgres
+   container. Acceptable because at-least-once + outbox replay guarantees
+   the last 10ms of WAL can be regenerated. **Do not do this on a real
+   primary unless you understand the durability tradeoff** — for taskq it's
+   fine because the broker side will replay anything that gets lost.
+5. **Per-row JDBC inserts inside the worker.** Every job logged
+   `LEASED + (SUCCEEDED|RETRY_SCHEDULED)` as two separate INSERTs. Added
+   `JobEventLog.appendAll(...)` (`JdbcTemplate.batchUpdate`); worker now
+   accumulates events and flushes once.
+6. **Per-row `XADD` from the relay.** Replaced with
+   `JobBroker.publishReadyBatch(...)` — Lettuce async pipelines N XADDs in
+   one socket flush.
+7. **Synchronous Lettuce in the rate-limit filter.** Pinned a Tomcat thread
+   for every Redis round trip. Switched to `tryAcquireAsync(...)` (Lettuce
+   async EVALSHA) with a 50ms timeout + fail-open fallback. Virtual threads
+   make the calling style simple.
+8. **Per-request tenant lookup.** Every `/v1/**` call did a SELECT on
+   `tenants WHERE api_key_hash = ?`. Added a 30s in-memory cache
+   (`ConcurrentHashMap`) in `ApiKeyAuthenticationFilter`. Tenant config
+   changes propagate within 30s. `TenantsController.updateMe` calls
+   `ApiKeyAuthenticationFilter.invalidateAll()` after a successful PATCH so
+   the editor's own next request reflects the new RPS / burst / concurrency
+   immediately (no 30s wait).
+9. **Workers running behind a single Lettuce connection.** Lettuce
+   multiplexes commands on one connection — the wrong move under sustained
+   load is to share it across every component. We *do* share, but every
+   per-component path uses async + pipelining specifically so a slow caller
+   never head-of-lines someone else.
+
+### What's left when you outgrow this box
+
+- Run multiple app instances. Postgres + Redis already scale horizontally.
+- Move handlers off virtual threads if your host has only 2–4 vCPUs (lower
+  context-switch cost on platform threads).
+- Shard Redis Streams by tenant (Redis Cluster) before considering Kafka.
+- See [`docs/adr/0004-broker-choice-redis.md`](adr/0004-broker-choice-redis.md)
+  for the broker-upgrade discussion.
+
+---
+
+## 9. Past chat reference
 
 The full Cursor chat history that produced this codebase (architecture
 discussions, scenario matrix, BE+UI testing plan) lives in this assistant’s
 local agent transcripts. Future agents resuming work should read this file
 **first**, then `docs/ARCHITECTURE.md`, then `docs/TESTING.md`. They contain
 the binding decisions; the chat history is supporting context only.
+
+For component-level diagrams and design decisions see
+[`docs/ARCHITECTURE.md`](ARCHITECTURE.md), and for the operational playbook
+see [`docs/RUNBOOK.md`](RUNBOOK.md). This CONTEXT file is the working
+summary that ties them together.

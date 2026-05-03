@@ -2,6 +2,8 @@ package com.merakilabs.taskq.core.port;
 
 import com.merakilabs.taskq.core.domain.TenantId;
 import java.time.Duration;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 
 public interface RateLimiter {
 
@@ -10,6 +12,16 @@ public interface RateLimiter {
      * if not, when to retry.
      */
     Decision tryAcquire(TenantId tenantId, int rps, int burst);
+
+    /**
+     * Non-blocking variant that returns a future. Default impl wraps the synchronous call —
+     * implementations backed by a true async client (Lettuce async) SHOULD override and avoid
+     * holding the calling thread.
+     */
+    default CompletionStage<Decision> tryAcquireAsync(
+            final TenantId tenantId, final int rps, final int burst) {
+        return CompletableFuture.completedFuture(tryAcquire(tenantId, rps, burst));
+    }
 
     record Decision(boolean allowed, long remaining, Duration retryAfter) {
         public static Decision allow(final long remaining) {

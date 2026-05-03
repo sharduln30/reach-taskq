@@ -1,0 +1,1858 @@
+{
+  "info": {
+    "name": "Reach TaskQ \u2014 Stress",
+    "_postman_id": "reach-taskq-stress-2026-04-30",
+    "description": "Knob-driven stress collection for reach-taskq. Each folder is one targeted load shape; every assertion is configurable via collection variables.\n\n## Knobs (override via Newman `--env-var key=val` or environment file)\n\n| Knob | Default | Purpose |\n|------|---------|---------|\n| `concurrencyN`        | 10  | parallel `pm.sendRequest` per request |\n| `iterationOps`        | 50  | total ops per request (burst size) |\n| `successPct`          | 70  | mix: success outcome |\n| `flapPct`             | 20  | mix: flap (retry-then-succeed) |\n| `failPct`             | 10  | mix: terminal fail |\n| `idempotentPct`       | 30  | % of submits sent with `Idempotency-Key` |\n| `idempotencyDupPct`   | 50  | of those keys, % that REUSE an existing key |\n| `maxAttempts`         | 5   | per-job attempt budget |\n| `payloadKb`           | 0   | extra padding bytes (KiB) injected into payload |\n| `errorRateThreshold`  | 0.01| max acceptable failed-call ratio |\n| `p95Threshold`        | 250 | max acceptable p95 submit latency (ms) |\n| `saturateStartConc`   | 10  | escalating concurrency start |\n| `saturateMaxConc`     | 100 | escalating concurrency cap |\n| `saturateStep`        | 10  | escalating concurrency step |\n\nAll knobs map 1:1 to Newman flags (e.g. `--env-var concurrencyN=64`)\n\n## Folders\n1. Hammer \u00b7 Submit (configurable mix)\n2. Hammer \u00b7 Idempotency replay storm\n3. Hammer \u00b7 Read-heavy (stats + lists)\n4. Hammer \u00b7 Get-by-id fan-out\n5. Hammer \u00b7 DLQ flood + replay storm\n6. Hammer \u00b7 Saturate (escalating concurrency)\n7. Hammer \u00b7 Payload size stress\n8. Verify \u00b7 Metrics summary (asserts against /actuator/prometheus)",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "apikey",
+    "apikey": [
+      {
+        "key": "key",
+        "value": "X-API-Key",
+        "type": "string"
+      },
+      {
+        "key": "value",
+        "value": "{{apiKey}}",
+        "type": "string"
+      },
+      {
+        "key": "in",
+        "value": "header",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080"
+    },
+    {
+      "key": "apiKey",
+      "value": "demo-api-key-do-not-use-in-prod"
+    },
+    {
+      "key": "queue",
+      "value": "default"
+    },
+    {
+      "key": "concurrencyN",
+      "value": "10"
+    },
+    {
+      "key": "iterationOps",
+      "value": "50"
+    },
+    {
+      "key": "successPct",
+      "value": "70"
+    },
+    {
+      "key": "flapPct",
+      "value": "20"
+    },
+    {
+      "key": "failPct",
+      "value": "10"
+    },
+    {
+      "key": "idempotentPct",
+      "value": "30"
+    },
+    {
+      "key": "idempotencyDupPct",
+      "value": "50"
+    },
+    {
+      "key": "maxAttempts",
+      "value": "5"
+    },
+    {
+      "key": "payloadKb",
+      "value": "0"
+    },
+    {
+      "key": "errorRateThreshold",
+      "value": "0.01"
+    },
+    {
+      "key": "p95Threshold",
+      "value": "500"
+    },
+    {
+      "key": "saturateStartConc",
+      "value": "10"
+    },
+    {
+      "key": "saturateMaxConc",
+      "value": "100"
+    },
+    {
+      "key": "saturateStep",
+      "value": "10"
+    },
+    {
+      "key": "aggregateP95Threshold",
+      "value": "4000"
+    }
+  ],
+  "event": [],
+  "item": [
+    {
+      "name": "0 \u00b7 Run all (one-click orchestrator)",
+      "description": "Click Send on either request inside this folder. The orchestrator reads every knob from the collection Variables tab, runs all stress scenarios end-to-end, and prints a single consolidated report in the Postman test results console.",
+      "item": [
+        {
+          "name": "\ud83d\udd27 Show current config (sanity check)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "function _p(xs, q) { if (!xs || !xs.length) return 0; const s=[...xs].sort((a,b)=>a-b); return s[Math.min(s.length-1, Math.floor(q*s.length))]; }",
+                  "function _randomKey() { return Math.random().toString(36).slice(2,10); }",
+                  "function _pickOutcome(sp, fp, xp) { const r=Math.random()*(sp+fp+xp); if (r<sp) return 'success'; if (r<sp+fp) return 'flap'; return 'fail'; }",
+                  "function _pad(kb) { return kb>0 ? 'x'.repeat(kb*1024) : ''; }",
+                  "var _cv = (k,d)=>{const v=pm.variables.get(k);return v==null||v===''?d:v;};",
+                  "var cfg = {",
+                  "  baseUrl: _cv('baseUrl','http://localhost:8080'),",
+                  "  apiKey: _cv('apiKey','demo-api-key-do-not-use-in-prod'),",
+                  "  queue: _cv('queue','default'),",
+                  "  concurrencyN: parseInt(_cv('concurrencyN',10),10),",
+                  "  iterationOps: parseInt(_cv('iterationOps',50),10),",
+                  "  successPct: parseFloat(_cv('successPct',70)),",
+                  "  flapPct: parseFloat(_cv('flapPct',20)),",
+                  "  failPct: parseFloat(_cv('failPct',10)),",
+                  "  idempotentPct: parseFloat(_cv('idempotentPct',30)),",
+                  "  idempotencyDupPct: parseFloat(_cv('idempotencyDupPct',50)),",
+                  "  maxAttempts: parseInt(_cv('maxAttempts',5),10),",
+                  "  payloadKb: parseInt(_cv('payloadKb',0),10),",
+                  "  errorRateThreshold: parseFloat(_cv('errorRateThreshold',0.01)),",
+                  "  p95Threshold: parseInt(_cv('p95Threshold',500),10),",
+                  "  saturateStartConc: parseInt(_cv('saturateStartConc',10),10),",
+                  "  saturateMaxConc: parseInt(_cv('saturateMaxConc',100),10),",
+                  "  saturateStep: parseInt(_cv('saturateStep',10),10)",
+                  "};",
+                  "// Echo config to console \u2014 useful for confirming what your changes look like.",
+                  "console.log('\u25b6 Current stress config:');",
+                  "Object.keys(cfg).forEach(function (k) { console.log('   ' + k.padEnd(22) + ' = ' + cfg[k]); });"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('reachable', function () { pm.response.to.have.status(200); });",
+                  "console.log('\u25b6 Backend says queue stats:', pm.response.text());"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/queues/{{queue}}/stats",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "queues",
+                "{{queue}}",
+                "stats"
+              ]
+            }
+          }
+        },
+        {
+          "name": "\u26a1 Run all stress scenarios (single click)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "function _p(xs, q) { if (!xs || !xs.length) return 0; const s=[...xs].sort((a,b)=>a-b); return s[Math.min(s.length-1, Math.floor(q*s.length))]; }",
+                  "function _randomKey() { return Math.random().toString(36).slice(2,10); }",
+                  "function _pickOutcome(sp, fp, xp) { const r=Math.random()*(sp+fp+xp); if (r<sp) return 'success'; if (r<sp+fp) return 'flap'; return 'fail'; }",
+                  "function _pad(kb) { return kb>0 ? 'x'.repeat(kb*1024) : ''; }",
+                  "var _cv = (k,d)=>{const v=pm.variables.get(k);return v==null||v===''?d:v;};",
+                  "var cfg = {",
+                  "  baseUrl: _cv('baseUrl','http://localhost:8080'),",
+                  "  apiKey: _cv('apiKey','demo-api-key-do-not-use-in-prod'),",
+                  "  queue: _cv('queue','default'),",
+                  "  concurrencyN: parseInt(_cv('concurrencyN',10),10),",
+                  "  iterationOps: parseInt(_cv('iterationOps',50),10),",
+                  "  successPct: parseFloat(_cv('successPct',70)),",
+                  "  flapPct: parseFloat(_cv('flapPct',20)),",
+                  "  failPct: parseFloat(_cv('failPct',10)),",
+                  "  idempotentPct: parseFloat(_cv('idempotentPct',30)),",
+                  "  idempotencyDupPct: parseFloat(_cv('idempotencyDupPct',50)),",
+                  "  maxAttempts: parseInt(_cv('maxAttempts',5),10),",
+                  "  payloadKb: parseInt(_cv('payloadKb',0),10),",
+                  "  errorRateThreshold: parseFloat(_cv('errorRateThreshold',0.01)),",
+                  "  p95Threshold: parseInt(_cv('p95Threshold',500),10),",
+                  "  saturateStartConc: parseInt(_cv('saturateStartConc',10),10),",
+                  "  saturateMaxConc: parseInt(_cv('saturateMaxConc',100),10),",
+                  "  saturateStep: parseInt(_cv('saturateStep',10),10)",
+                  "};",
+                  "// One-click orchestrator. Click 'Send' to run every stress scenario in sequence",
+                  "// using whatever config you set in the collection Variables tab.",
+                  "// Final report is rendered by the post-response test script.",
+                  "",
+                  "var report = { startedAt: new Date().toISOString(), cfg, scenarios: [] };",
+                  "var totals = { req: 0, ok: 0, fail: 0, fivexx: 0, fourxx: 0, latencies: [] };",
+                  "",
+                  "// --- helper: run N HTTP ops at concurrency C, with per-op factory; calls cb(stats) when done.",
+                  "function runBurst(name, N, C, opFactory, cb, excludeFromTotals) {",
+                  "  var t0 = Date.now();",
+                  "  var stats = { name, N, C, ok2xx:0, http200:0, http202:0, http409:0, http429:0, http5xx:0, other:0, latencies: [] };",
+                  "  var launched = 0, completed = 0;",
+                  "  function spawn() {",
+                  "    while (launched - completed < C && launched < N) {",
+                  "      var i = launched++;",
+                  "      var req = opFactory(i);",
+                  "      var ts = Date.now();",
+                  "      pm.sendRequest(req, function (err, res) {",
+                  "        var ms = Date.now() - ts;",
+                  "        stats.latencies.push(ms);",
+                  "        totals.req++;",
+                  "        if (!excludeFromTotals) totals.latencies.push(ms);",
+                  "        if (err || !res) { stats.other++; totals.fail++; }",
+                  "        else if (res.code === 200) { stats.http200++; stats.ok2xx++; totals.ok++; }",
+                  "        else if (res.code === 202) { stats.http202++; stats.ok2xx++; totals.ok++; }",
+                  "        else if (res.code >= 200 && res.code < 300) { stats.ok2xx++; totals.ok++; }",
+                  "        else if (res.code === 409) { stats.http409++; totals.fourxx++; }",
+                  "        else if (res.code === 429) { stats.http429++; totals.fourxx++; }",
+                  "        else if (res.code >= 400 && res.code < 500) { totals.fourxx++; stats.other++; }",
+                  "        else if (res.code >= 500) { stats.http5xx++; totals.fivexx++; totals.fail++; }",
+                  "        else { stats.other++; totals.fail++; }",
+                  "        completed++;",
+                  "        if (completed === N) {",
+                  "          stats.wallMs = Date.now() - t0;",
+                  "          stats.p50 = _p(stats.latencies, 0.5);",
+                  "          stats.p95 = _p(stats.latencies, 0.95);",
+                  "          stats.p99 = _p(stats.latencies, 0.99);",
+                  "          stats.rps = stats.wallMs > 0 ? Math.round(N * 1000 / stats.wallMs) : 0;",
+                  "          delete stats.latencies;",
+                  "          report.scenarios.push(stats);",
+                  "          cb(stats);",
+                  "        } else spawn();",
+                  "      });",
+                  "    }",
+                  "  }",
+                  "  spawn();",
+                  "}",
+                  "",
+                  "// --- factories for each scenario.",
+                  "var headersBase = { 'Content-Type': 'application/json', 'X-API-Key': cfg.apiKey };",
+                  "var reusableKeys = [];",
+                  "function fSubmitMixed(i) {",
+                  "  var out = _pickOutcome(cfg.successPct, cfg.flapPct, cfg.failPct);",
+                  "  var headers = Object.assign({}, headersBase);",
+                  "  if (Math.random() * 100 < cfg.idempotentPct) {",
+                  "    var reuse = reusableKeys.length && (Math.random() * 100 < cfg.idempotencyDupPct);",
+                  "    var key = reuse ? reusableKeys[Math.floor(Math.random()*reusableKeys.length)] : ('runall-' + Date.now() + '-' + i + '-' + _randomKey());",
+                  "    if (!reuse) reusableKeys.push(key);",
+                  "    headers['Idempotency-Key'] = key;",
+                  "  }",
+                  "  var payload = { outcome: out, i, padding: _pad(cfg.payloadKb) };",
+                  "  if (out === 'flap') payload.passOn = Math.min(cfg.maxAttempts, 2);",
+                  "  return { url: cfg.baseUrl + '/v1/jobs', method: 'POST', header: headers,",
+                  "    body: { mode: 'raw', raw: JSON.stringify({ queue: cfg.queue, type: 'echo', payload, maxAttempts: out === 'fail' ? 1 : cfg.maxAttempts }) } };",
+                  "}",
+                  "function fIdemSame(key) { return function (i) { return { url: cfg.baseUrl + '/v1/jobs', method: 'POST',",
+                  "  header: Object.assign({ 'Idempotency-Key': key }, headersBase),",
+                  "  body: { mode: 'raw', raw: JSON.stringify({ queue: cfg.queue, type: 'echo', payload: { outcome: 'success', i } }) } }; }; }",
+                  "function fIdemMismatch(key) { return function (i) { return { url: cfg.baseUrl + '/v1/jobs', method: 'POST',",
+                  "  header: Object.assign({ 'Idempotency-Key': key }, headersBase),",
+                  "  body: { mode: 'raw', raw: JSON.stringify({ queue: cfg.queue, type: 'echo', payload: { outcome: 'fail', i, drift: Math.random() } }) } }; }; }",
+                  "function fStats(i) { return { url: cfg.baseUrl + '/v1/queues/' + cfg.queue + '/stats', method: 'GET', header: { 'X-API-Key': cfg.apiKey } }; }",
+                  "function fListJobs(i) { var fs=['','SUCCEEDED','DEAD','READY','SCHEDULED']; var f=fs[i % fs.length];",
+                  "  return { url: cfg.baseUrl + '/v1/jobs?limit=20' + (f ? '&status=' + f : ''), method: 'GET', header: { 'X-API-Key': cfg.apiKey } }; }",
+                  "function fGetById(id) { return function (i) { return { url: cfg.baseUrl + '/v1/jobs/' + id, method: 'GET', header: { 'X-API-Key': cfg.apiKey } }; }; }",
+                  "function fFailSubmit(i) { return { url: cfg.baseUrl + '/v1/jobs', method: 'POST', header: headersBase,",
+                  "  body: { mode: 'raw', raw: JSON.stringify({ queue: cfg.queue, type: 'echo', payload: { outcome: 'fail', i }, maxAttempts: 1 }) } }; }",
+                  "function fSizeSubmit(kb) { var pad = 'x'.repeat(kb * 1024); return function (i) { return { url: cfg.baseUrl + '/v1/jobs', method: 'POST', header: headersBase,",
+                  "  body: { mode: 'raw', raw: JSON.stringify({ queue: cfg.queue, type: 'echo', payload: { outcome: 'success', padding: pad } }) } }; }; }",
+                  "",
+                  "// --- chain scenarios. Each step receives next() to invoke the following step.",
+                  "var ops = cfg.iterationOps, conc = cfg.concurrencyN;",
+                  "",
+                  "function step1(next) { runBurst('1 \u00b7 Submit (mixed)', ops, conc, fSubmitMixed, function(){ next(); }); }",
+                  "",
+                  "function step2(next) {",
+                  "  var key = 'idem-runall-' + Date.now();",
+                  "  runBurst('2a \u00b7 Idempotent same-key storm', ops, conc, fIdemSame(key), function(){ next(); });",
+                  "}",
+                  "",
+                  "function step3(next) {",
+                  "  var key = 'mismatch-runall-' + Date.now();",
+                  "  // Seed the key first.",
+                  "  pm.sendRequest({ url: cfg.baseUrl + '/v1/jobs', method: 'POST',",
+                  "    header: Object.assign({ 'Idempotency-Key': key }, headersBase),",
+                  "    body: { mode: 'raw', raw: JSON.stringify({ queue: cfg.queue, type: 'echo', payload: { outcome: 'success', seed: true } }) } },",
+                  "    function(){ runBurst('2b \u00b7 Idempotent mismatch storm', ops, conc, fIdemMismatch(key), function(){ next(); }); });",
+                  "}",
+                  "",
+                  "function step4(next) { runBurst('3a \u00b7 Read-heavy queue stats', ops, conc, fStats, function(){ next(); }); }",
+                  "function step5(next) { runBurst('3b \u00b7 Read-heavy list jobs',  ops, conc, fListJobs, function(){ next(); }); }",
+                  "",
+                  "function step6(next) {",
+                  "  pm.sendRequest({ url: cfg.baseUrl + '/v1/jobs', method: 'POST', header: headersBase,",
+                  "    body: { mode: 'raw', raw: JSON.stringify({ queue: cfg.queue, type: 'echo', payload: { outcome: 'success' } }) } },",
+                  "    function(_e, r) {",
+                  "      var id = (r && r.code === 202) ? (function(){ try { return r.json().id; } catch(_) { return null; } })() : null;",
+                  "      if (!id) { report.scenarios.push({ name: '4 \u00b7 Get-by-id fan-out', skipped: 'no id from seed submit' }); next(); return; }",
+                  "      runBurst('4 \u00b7 Get-by-id fan-out', ops, conc, fGetById(id), function(){ next(); });",
+                  "    });",
+                  "}",
+                  "",
+                  "function step7(next) {",
+                  "  // DLQ flood with smaller burst to keep total runtime reasonable.",
+                  "  var dlqOps = Math.min(ops, 30);",
+                  "  runBurst('5 \u00b7 DLQ flood', dlqOps, conc, fFailSubmit, function(){ next(); });",
+                  "}",
+                  "",
+                  "function step8(next) {",
+                  "  // Saturate: ramp from start to max in step increments, opsPerLevel small.",
+                  "  var levels = [], stepResults = [];",
+                  "  for (var c = cfg.saturateStartConc; c <= cfg.saturateMaxConc; c += cfg.saturateStep) levels.push(c);",
+                  "  var idx = 0;",
+                  "  function runLevel() {",
+                  "    if (idx >= levels.length) {",
+                  "      report.scenarios.push({ name: '6 \u00b7 Saturate ramp', levels: stepResults });",
+                  "      next(); return;",
+                  "    }",
+                  "    var C = levels[idx++], N = Math.max(20, Math.floor(ops / 2));",
+                  "    runBurst('6 \u00b7 saturate@C=' + C, N, C, fSubmitMixed, function (s) {",
+                  "      stepResults.push({ C, N, ok: s.ok2xx, fivexx: s.http5xx, p95: s.p95, rps: s.rps });",
+                  "      var errRate = (s.N - s.ok2xx) / s.N;",
+                  "      if (s.http5xx > 0 || errRate > cfg.errorRateThreshold) { report.scenarios.push({ name: '6 \u00b7 Saturate ramp', levels: stepResults, knee: { C, errRate, fivexx: s.http5xx } }); next(); }",
+                  "      else runLevel();",
+                  "    }, true);",
+                  "  }",
+                  "  runLevel();",
+                  "}",
+                  "",
+                  "function step9(next) {",
+                  "  var sizes = [1, 16, 64, 256], sIdx = 0, results = [];",
+                  "  function nextSize() {",
+                  "    if (sIdx >= sizes.length) { report.scenarios.push({ name: '7 \u00b7 Payload size sweep', sizes: results }); next(); return; }",
+                  "    var kb = sizes[sIdx++], N = Math.max(5, Math.floor(ops / 4));",
+                  "    runBurst('7 \u00b7 size@' + kb + 'KiB', N, conc, fSizeSubmit(kb), function (s) {",
+                  "      results.push({ kb, N, ok: s.ok2xx, p413: 0, fivexx: s.http5xx, p95: s.p95 });",
+                  "      nextSize();",
+                  "    });",
+                  "  }",
+                  "  nextSize();",
+                  "}",
+                  "",
+                  "function step10(next) {",
+                  "  pm.sendRequest({ url: cfg.baseUrl + '/actuator/prometheus', method: 'GET' }, function (_e, r) {",
+                  "    var text = (r && r.text()) || '';",
+                  "    function valOf(name, lab) { var re = new RegExp('^' + name + (lab ? '\\\\{[^}]*' + lab + '[^}]*\\\\}' : '(?:\\\\{[^}]*\\\\})?') + '\\\\s+([0-9eE.+-]+)', 'm'); var m = text.match(re); return m ? parseFloat(m[1]) : null; }",
+                  "    function sumOf(name, lab) { var re = new RegExp('^' + name + '\\\\{[^}]*' + lab + '[^}]*\\\\}\\\\s+([0-9eE.+-]+)', 'gm'); var t = 0, m; while ((m = re.exec(text)) !== null) t += parseFloat(m[1]); return t; }",
+                  "    var heapU = sumOf('jvm_memory_used_bytes', 'area=\"heap\"');",
+                  "    var heapM = sumOf('jvm_memory_max_bytes', 'area=\"heap\"');",
+                  "    report.metrics = {",
+                  "      liveThreads: valOf('jvm_threads_live_threads', ''),",
+                  "      heapPct: heapM > 0 ? +(heapU / heapM).toFixed(3) : 0,",
+                  "      hikariActive: valOf('hikaricp_connections_active', ''),",
+                  "      hikariPending: valOf('hikaricp_connections_pending', ''),",
+                  "      total5xx: sumOf('http_server_requests_seconds_count', 'status=\"5'),",
+                  "      total4xx: sumOf('http_server_requests_seconds_count', 'status=\"4')",
+                  "    };",
+                  "    next();",
+                  "  });",
+                  "}",
+                  "",
+                  "function step11(next) {",
+                  "  pm.sendRequest({ url: 'http://localhost:9090/api/v1/alerts', method: 'GET' }, function (_e, r) {",
+                  "    if (r && r.code === 200) {",
+                  "      try {",
+                  "        var alerts = (r.json().data || {}).alerts || [];",
+                  "        report.alerts = alerts.map(function (a) { return { name: a.labels.alertname, state: a.state, severity: a.labels.severity, summary: (a.annotations || {}).summary }; });",
+                  "      } catch (e) { report.alerts = []; }",
+                  "    } else { report.alerts = null; /* prometheus unreachable */ }",
+                  "    next();",
+                  "  });",
+                  "}",
+                  "",
+                  "function done() {",
+                  "  report.finishedAt = new Date().toISOString();",
+                  "  report.totals = {",
+                  "    requests: totals.req,",
+                  "    ok2xx: totals.ok,",
+                  "    fail: totals.fail,",
+                  "    fivexx: totals.fivexx,",
+                  "    fourxx: totals.fourxx,",
+                  "    p50: _p(totals.latencies, 0.5),",
+                  "    p95: _p(totals.latencies, 0.95),",
+                  "    p99: _p(totals.latencies, 0.99)",
+                  "  };",
+                  "  pm.collectionVariables.set('_runAllReport', JSON.stringify(report));",
+                  "}",
+                  "",
+                  "// chain runner",
+                  "var steps = [step1, step2, step3, step4, step5, step6, step7, step8, step9, step10, step11];",
+                  "function chain(i) { if (i >= steps.length) return done(); steps[i](function(){ chain(i + 1); }); }",
+                  "console.log('\u25b6 run-all started \u2014 config:', JSON.stringify(cfg));",
+                  "chain(0);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var rep = JSON.parse(pm.collectionVariables.get('_runAllReport') || '{}');",
+                  "if (!rep.totals) {",
+                  "  pm.test('orchestrator finished', function () { pm.expect.fail('No report \u2014 orchestrator did not finish. Check pre-request console.'); });",
+                  "  return;",
+                  "}",
+                  "",
+                  "console.log('\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550');",
+                  "console.log('  REACH TASKQ \u2014 Run-All Stress Report');",
+                  "console.log('\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550');",
+                  "console.log('Started   : ' + rep.startedAt);",
+                  "console.log('Finished  : ' + rep.finishedAt);",
+                  "console.log('Config    : ' + JSON.stringify(rep.cfg));",
+                  "console.log('\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500');",
+                  "console.log('Scenarios:');",
+                  "(rep.scenarios || []).forEach(function (s) {",
+                  "  if (s.skipped) { console.log('  \u2022 ' + s.name + ' \u2014 SKIPPED (' + s.skipped + ')'); return; }",
+                  "  if (s.levels) {",
+                  "    console.log('  \u2022 ' + s.name + ':');",
+                  "    s.levels.forEach(function (l) { console.log('      C=' + String(l.C).padStart(3) + '  ok=' + l.ok + '/' + l.N + '  5xx=' + l.fivexx + '  p95=' + l.p95 + 'ms  rps=' + l.rps); });",
+                  "    if (s.knee) console.log('      >> KNEE at C=' + s.knee.C + '  errRate=' + s.knee.errRate.toFixed(4) + '  5xx=' + s.knee.fivexx);",
+                  "    return;",
+                  "  }",
+                  "  if (s.sizes) {",
+                  "    console.log('  \u2022 ' + s.name + ':');",
+                  "    s.sizes.forEach(function (z) { console.log('      ' + String(z.kb).padStart(3) + 'KiB  ok=' + z.ok + '/' + z.N + '  5xx=' + z.fivexx + '  p95=' + z.p95 + 'ms'); });",
+                  "    return;",
+                  "  }",
+                  "  var line = '  \u2022 ' + s.name.padEnd(36) + ' N=' + String(s.N).padStart(4) + ' C=' + String(s.C).padStart(3);",
+                  "  line += '  2xx=' + s.ok2xx + '  409=' + (s.http409||0) + '  429=' + (s.http429||0) + '  5xx=' + s.http5xx;",
+                  "  line += '  p50=' + s.p50 + 'ms  p95=' + s.p95 + 'ms  p99=' + s.p99 + 'ms  rps=' + s.rps + '  wall=' + s.wallMs + 'ms';",
+                  "  console.log(line);",
+                  "});",
+                  "console.log('\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500');",
+                  "console.log('Totals:    requests=' + rep.totals.requests + '  2xx=' + rep.totals.ok2xx + '  4xx=' + rep.totals.fourxx + '  5xx=' + rep.totals.fivexx + '  fail=' + rep.totals.fail);",
+                  "console.log('Latency:   p50=' + rep.totals.p50 + 'ms  p95=' + rep.totals.p95 + 'ms  p99=' + rep.totals.p99 + 'ms');",
+                  "if (rep.metrics) {",
+                  "  console.log('Metrics:   liveThreads=' + rep.metrics.liveThreads + '  heap=' + (rep.metrics.heapPct*100).toFixed(1) + '%  hikariActive=' + rep.metrics.hikariActive + '  hikariPending=' + rep.metrics.hikariPending);",
+                  "}",
+                  "if (rep.alerts && rep.alerts.length) {",
+                  "  console.log('Firing alerts:');",
+                  "  rep.alerts.forEach(function (a) { console.log('  ! ' + a.name + ' (' + a.state + ', severity=' + a.severity + ')'); });",
+                  "} else if (rep.alerts !== null) {",
+                  "  console.log('Firing alerts: none');",
+                  "} else {",
+                  "  console.log('Firing alerts: prometheus :9090 unreachable');",
+                  "}",
+                  "console.log('\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550');",
+                  "",
+                  "var cfg = rep.cfg;",
+                  "var errRate = rep.totals.requests ? (rep.totals.fail / rep.totals.requests) : 0;",
+                  "",
+                  "pm.test('aggregate: 0 unexpected 5xx (system survives mixed load)', function () {",
+                  "  pm.expect(rep.totals.fivexx, 'total 5xx across all scenarios').to.eql(0);",
+                  "});",
+                  "pm.test('aggregate: error rate < ' + cfg.errorRateThreshold, function () {",
+                  "  pm.expect(errRate).to.be.below(cfg.errorRateThreshold + 1e-9);",
+                  "});",
+                  "var aggP95 = parseInt(pm.variables.get('aggregateP95Threshold') || '2500', 10);",
+                  "pm.test('aggregate: p95 < ' + aggP95 + 'ms (multi-shape, override aggregateP95Threshold)', function () {",
+                  "  pm.expect(rep.totals.p95).to.be.below(aggP95);",
+                  "});",
+                  "if (rep.metrics) {",
+                  "  pm.test('JVM live threads < 500 (vthread sanity)', function () { pm.expect(rep.metrics.liveThreads).to.be.below(500); });",
+                  "  pm.test('heap < 95%', function () { pm.expect(rep.metrics.heapPct).to.be.below(0.95); });",
+                  "  pm.test('hikari pending == 0 after run', function () { pm.expect(rep.metrics.hikariPending).to.eql(0); });",
+                  "}",
+                  "if (rep.alerts) {",
+                  "  var crit = rep.alerts.filter(function (a) { return a.severity === 'critical' && a.state === 'firing'; });",
+                  "  pm.test('no critical alerts firing', function () { pm.expect(crit, JSON.stringify(crit)).to.have.length(0); });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{apiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/queues/{{queue}}/stats",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "queues",
+                "{{queue}}",
+                "stats"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "1 \u00b7 Hammer \u00b7 Submit (configurable mix)",
+      "item": [
+        {
+          "name": "Submit burst (concurrent, mixed outcomes)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "function _p(xs, q) { if (!xs || !xs.length) return 0; const s=[...xs].sort((a,b)=>a-b); return s[Math.min(s.length-1, Math.floor(q*s.length))]; }",
+                  "function _randomKey() { return Math.random().toString(36).slice(2,10); }",
+                  "function _pickOutcome(sp, fp, xp) { const r=Math.random()*(sp+fp+xp); if (r<sp) return 'success'; if (r<sp+fp) return 'flap'; return 'fail'; }",
+                  "function _pad(kb) { return kb>0 ? 'x'.repeat(kb*1024) : ''; }",
+                  "var _cv = (k,d)=>{const v=pm.variables.get(k);return v==null||v===''?d:v;};",
+                  "var cfg = {",
+                  "  baseUrl: _cv('baseUrl','http://localhost:8080'),",
+                  "  apiKey: _cv('apiKey','demo-api-key-do-not-use-in-prod'),",
+                  "  queue: _cv('queue','default'),",
+                  "  concurrencyN: parseInt(_cv('concurrencyN',10),10),",
+                  "  iterationOps: parseInt(_cv('iterationOps',50),10),",
+                  "  successPct: parseFloat(_cv('successPct',70)),",
+                  "  flapPct: parseFloat(_cv('flapPct',20)),",
+                  "  failPct: parseFloat(_cv('failPct',10)),",
+                  "  idempotentPct: parseFloat(_cv('idempotentPct',30)),",
+                  "  idempotencyDupPct: parseFloat(_cv('idempotencyDupPct',50)),",
+                  "  maxAttempts: parseInt(_cv('maxAttempts',5),10),",
+                  "  payloadKb: parseInt(_cv('payloadKb',0),10),",
+                  "  errorRateThreshold: parseFloat(_cv('errorRateThreshold',0.01)),",
+                  "  p95Threshold: parseInt(_cv('p95Threshold',250),10),",
+                  "  saturateStartConc: parseInt(_cv('saturateStartConc',10),10),",
+                  "  saturateMaxConc: parseInt(_cv('saturateMaxConc',100),10),",
+                  "  saturateStep: parseInt(_cv('saturateStep',10),10)",
+                  "};",
+                  "const N = cfg.iterationOps;",
+                  "const C = Math.max(1, Math.min(cfg.concurrencyN, N));",
+                  "const stats = { ok2xx: 0, http429: 0, http409: 0, http5xx: 0, other: 0, perOutcome: {success:0,flap:0,fail:0}, latencies: [] };",
+                  "const reusableKeys = [];",
+                  "let started = Date.now(), launched = 0, completed = 0;",
+                  "function spawn() {",
+                  "  while (launched - completed < C && launched < N) {",
+                  "    const i = launched++;",
+                  "    const out = _pickOutcome(cfg.successPct, cfg.flapPct, cfg.failPct);",
+                  "    stats.perOutcome[out]++;",
+                  "    const headers = { 'Content-Type': 'application/json', 'X-API-Key': cfg.apiKey };",
+                  "    let key = null;",
+                  "    if (Math.random() * 100 < cfg.idempotentPct) {",
+                  "      const reuse = reusableKeys.length && (Math.random() * 100 < cfg.idempotencyDupPct);",
+                  "      key = reuse ? reusableKeys[Math.floor(Math.random() * reusableKeys.length)] : `stress-${Date.now()}-${i}-${_randomKey()}`;",
+                  "      if (!reuse) reusableKeys.push(key);",
+                  "      headers['Idempotency-Key'] = key;",
+                  "    }",
+                  "    const payload = { outcome: out, i, padding: _pad(cfg.payloadKb) };",
+                  "    if (out === 'flap') payload.passOn = Math.min(cfg.maxAttempts, 2);",
+                  "    const body = { queue: cfg.queue, type: 'echo', payload, maxAttempts: out === 'fail' ? 1 : cfg.maxAttempts };",
+                  "    const t0 = Date.now();",
+                  "    pm.sendRequest({ url: `${cfg.baseUrl}/v1/jobs`, method: 'POST', header: headers, body: { mode: 'raw', raw: JSON.stringify(body) } }, (err, res) => {",
+                  "      const ms = Date.now() - t0;",
+                  "      stats.latencies.push(ms);",
+                  "      if (err || !res) stats.other++;",
+                  "      else if (res.code >= 200 && res.code < 300) stats.ok2xx++;",
+                  "      else if (res.code === 429) stats.http429++;",
+                  "      else if (res.code === 409) stats.http409++;",
+                  "      else if (res.code >= 500) stats.http5xx++;",
+                  "      else stats.other++;",
+                  "      completed++;",
+                  "      if (completed === N) finalize(); else spawn();",
+                  "    });",
+                  "  }",
+                  "}",
+                  "function finalize() {",
+                  "  pm.collectionVariables.set('lastBurst', JSON.stringify({ ...stats, wallMs: Date.now() - started, N, C }));",
+                  "}",
+                  "spawn();"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "function _p(xs, q) { if (!xs || !xs.length) return 0; const s=[...xs].sort((a,b)=>a-b); return s[Math.min(s.length-1, Math.floor(q*s.length))]; }",
+                  "function _randomKey() { return Math.random().toString(36).slice(2,10); }",
+                  "function _pickOutcome(sp, fp, xp) { const r=Math.random()*(sp+fp+xp); if (r<sp) return 'success'; if (r<sp+fp) return 'flap'; return 'fail'; }",
+                  "function _pad(kb) { return kb>0 ? 'x'.repeat(kb*1024) : ''; }",
+                  "var _cv = (k,d)=>{const v=pm.variables.get(k);return v==null||v===''?d:v;};",
+                  "var cfg = {",
+                  "  baseUrl: _cv('baseUrl','http://localhost:8080'),",
+                  "  apiKey: _cv('apiKey','demo-api-key-do-not-use-in-prod'),",
+                  "  queue: _cv('queue','default'),",
+                  "  concurrencyN: parseInt(_cv('concurrencyN',10),10),",
+                  "  iterationOps: parseInt(_cv('iterationOps',50),10),",
+                  "  successPct: parseFloat(_cv('successPct',70)),",
+                  "  flapPct: parseFloat(_cv('flapPct',20)),",
+                  "  failPct: parseFloat(_cv('failPct',10)),",
+                  "  idempotentPct: parseFloat(_cv('idempotentPct',30)),",
+                  "  idempotencyDupPct: parseFloat(_cv('idempotencyDupPct',50)),",
+                  "  maxAttempts: parseInt(_cv('maxAttempts',5),10),",
+                  "  payloadKb: parseInt(_cv('payloadKb',0),10),",
+                  "  errorRateThreshold: parseFloat(_cv('errorRateThreshold',0.01)),",
+                  "  p95Threshold: parseInt(_cv('p95Threshold',250),10),",
+                  "  saturateStartConc: parseInt(_cv('saturateStartConc',10),10),",
+                  "  saturateMaxConc: parseInt(_cv('saturateMaxConc',100),10),",
+                  "  saturateStep: parseInt(_cv('saturateStep',10),10)",
+                  "};",
+                  "const r = JSON.parse(pm.collectionVariables.get('lastBurst') || '{}');",
+                  "const total = r.N || 0;",
+                  "const errors = (r.http5xx || 0) + (r.other || 0);",
+                  "const errRate = total ? errors / total : 0;",
+                  "const p50 = _p(r.latencies || [], 0.5);",
+                  "const p95 = _p(r.latencies || [], 0.95);",
+                  "const p99 = _p(r.latencies || [], 0.99);",
+                  "const rps = r.wallMs > 0 ? (total * 1000 / r.wallMs) : 0;",
+                  "console.log(`burst: N=${total} C=${r.C} ok=${r.ok2xx} 409=${r.http409} 429=${r.http429} 5xx=${r.http5xx} other=${r.other} | mix=${JSON.stringify(r.perOutcome)} | wall=${r.wallMs}ms rps=${rps.toFixed(1)} | p50=${p50}ms p95=${p95}ms p99=${p99}ms | errRate=${errRate.toFixed(4)}`);",
+                  "pm.test(`no 5xx (got ${r.http5xx})`, () => pm.expect(r.http5xx).to.eql(0));",
+                  "pm.test(`other-class errors == 0 (got ${r.other})`, () => pm.expect(r.other).to.eql(0));",
+                  "pm.test(`error rate < ${cfg.errorRateThreshold}`, () => pm.expect(errRate).to.be.below(cfg.errorRateThreshold + 1e-9));",
+                  "pm.test(`p95 < ${cfg.p95Threshold}ms`, () => pm.expect(p95).to.be.below(cfg.p95Threshold));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/queues/{{queue}}/stats",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "queues",
+                "{{queue}}",
+                "stats"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "2 \u00b7 Hammer \u00b7 Idempotency replay storm",
+      "item": [
+        {
+          "name": "Same key fired N times",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "function _p(xs, q) { if (!xs || !xs.length) return 0; const s=[...xs].sort((a,b)=>a-b); return s[Math.min(s.length-1, Math.floor(q*s.length))]; }",
+                  "function _randomKey() { return Math.random().toString(36).slice(2,10); }",
+                  "function _pickOutcome(sp, fp, xp) { const r=Math.random()*(sp+fp+xp); if (r<sp) return 'success'; if (r<sp+fp) return 'flap'; return 'fail'; }",
+                  "function _pad(kb) { return kb>0 ? 'x'.repeat(kb*1024) : ''; }",
+                  "var _cv = (k,d)=>{const v=pm.variables.get(k);return v==null||v===''?d:v;};",
+                  "var cfg = {",
+                  "  baseUrl: _cv('baseUrl','http://localhost:8080'),",
+                  "  apiKey: _cv('apiKey','demo-api-key-do-not-use-in-prod'),",
+                  "  queue: _cv('queue','default'),",
+                  "  concurrencyN: parseInt(_cv('concurrencyN',10),10),",
+                  "  iterationOps: parseInt(_cv('iterationOps',50),10),",
+                  "  successPct: parseFloat(_cv('successPct',70)),",
+                  "  flapPct: parseFloat(_cv('flapPct',20)),",
+                  "  failPct: parseFloat(_cv('failPct',10)),",
+                  "  idempotentPct: parseFloat(_cv('idempotentPct',30)),",
+                  "  idempotencyDupPct: parseFloat(_cv('idempotencyDupPct',50)),",
+                  "  maxAttempts: parseInt(_cv('maxAttempts',5),10),",
+                  "  payloadKb: parseInt(_cv('payloadKb',0),10),",
+                  "  errorRateThreshold: parseFloat(_cv('errorRateThreshold',0.01)),",
+                  "  p95Threshold: parseInt(_cv('p95Threshold',250),10),",
+                  "  saturateStartConc: parseInt(_cv('saturateStartConc',10),10),",
+                  "  saturateMaxConc: parseInt(_cv('saturateMaxConc',100),10),",
+                  "  saturateStep: parseInt(_cv('saturateStep',10),10)",
+                  "};",
+                  "const N = cfg.iterationOps;",
+                  "const C = Math.max(1, Math.min(cfg.concurrencyN, N));",
+                  "const key = `idem-storm-${Date.now()}-${_randomKey()}`;",
+                  "const ids = new Set();",
+                  "const stats = { code202: 0, code200: 0, code409: 0, code5xx: 0, other: 0, latencies: [] };",
+                  "let started = Date.now(), launched = 0, completed = 0;",
+                  "function spawn() {",
+                  "  while (launched - completed < C && launched < N) {",
+                  "    launched++;",
+                  "    const t0 = Date.now();",
+                  "    pm.sendRequest({",
+                  "      url: `${cfg.baseUrl}/v1/jobs`, method: 'POST',",
+                  "      header: { 'Content-Type': 'application/json', 'X-API-Key': cfg.apiKey, 'Idempotency-Key': key },",
+                  "      body: { mode: 'raw', raw: JSON.stringify({ queue: cfg.queue, type: 'echo', payload: { outcome: 'success' } }) }",
+                  "    }, (err, res) => {",
+                  "      stats.latencies.push(Date.now() - t0);",
+                  "      if (err || !res) stats.other++;",
+                  "      else if (res.code === 202) { stats.code202++; try { ids.add(res.json().id); } catch(_){} }",
+                  "      else if (res.code === 200) { stats.code200++; try { ids.add(res.json().id); } catch(_){} }",
+                  "      else if (res.code === 409) stats.code409++;",
+                  "      else if (res.code >= 500) stats.code5xx++;",
+                  "      else stats.other++;",
+                  "      completed++;",
+                  "      if (completed === N) finalize(); else spawn();",
+                  "    });",
+                  "  }",
+                  "}",
+                  "function finalize() { pm.collectionVariables.set('idemStorm', JSON.stringify({ ...stats, wallMs: Date.now() - started, N, C, uniqIds: [...ids].length })); }",
+                  "spawn();"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "function _p(xs, q) { if (!xs || !xs.length) return 0; const s=[...xs].sort((a,b)=>a-b); return s[Math.min(s.length-1, Math.floor(q*s.length))]; }",
+                  "function _randomKey() { return Math.random().toString(36).slice(2,10); }",
+                  "function _pickOutcome(sp, fp, xp) { const r=Math.random()*(sp+fp+xp); if (r<sp) return 'success'; if (r<sp+fp) return 'flap'; return 'fail'; }",
+                  "function _pad(kb) { return kb>0 ? 'x'.repeat(kb*1024) : ''; }",
+                  "var _cv = (k,d)=>{const v=pm.variables.get(k);return v==null||v===''?d:v;};",
+                  "var cfg = {",
+                  "  baseUrl: _cv('baseUrl','http://localhost:8080'),",
+                  "  apiKey: _cv('apiKey','demo-api-key-do-not-use-in-prod'),",
+                  "  queue: _cv('queue','default'),",
+                  "  concurrencyN: parseInt(_cv('concurrencyN',10),10),",
+                  "  iterationOps: parseInt(_cv('iterationOps',50),10),",
+                  "  successPct: parseFloat(_cv('successPct',70)),",
+                  "  flapPct: parseFloat(_cv('flapPct',20)),",
+                  "  failPct: parseFloat(_cv('failPct',10)),",
+                  "  idempotentPct: parseFloat(_cv('idempotentPct',30)),",
+                  "  idempotencyDupPct: parseFloat(_cv('idempotencyDupPct',50)),",
+                  "  maxAttempts: parseInt(_cv('maxAttempts',5),10),",
+                  "  payloadKb: parseInt(_cv('payloadKb',0),10),",
+                  "  errorRateThreshold: parseFloat(_cv('errorRateThreshold',0.01)),",
+                  "  p95Threshold: parseInt(_cv('p95Threshold',250),10),",
+                  "  saturateStartConc: parseInt(_cv('saturateStartConc',10),10),",
+                  "  saturateMaxConc: parseInt(_cv('saturateMaxConc',100),10),",
+                  "  saturateStep: parseInt(_cv('saturateStep',10),10)",
+                  "};",
+                  "const r = JSON.parse(pm.collectionVariables.get('idemStorm') || '{}');",
+                  "const p95 = _p(r.latencies || [], 0.95);",
+                  "console.log(`idemStorm: N=${r.N} C=${r.C} 202=${r.code202} 200=${r.code200} 409=${r.code409} 5xx=${r.code5xx} other=${r.other} uniqIds=${r.uniqIds} p95=${p95}ms`);",
+                  "pm.test('exactly one 202', () => pm.expect(r.code202).to.eql(1));",
+                  "pm.test(`${(r.N - 1)} replays as 200`, () => pm.expect(r.code200).to.eql(r.N - 1));",
+                  "pm.test('no 5xx', () => pm.expect(r.code5xx).to.eql(0));",
+                  "pm.test('no 409 (same payload, no mismatch)', () => pm.expect(r.code409).to.eql(0));",
+                  "pm.test('all responses point at one id', () => pm.expect(r.uniqIds).to.eql(1));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/queues/{{queue}}/stats",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "queues",
+                "{{queue}}",
+                "stats"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Same key but mismatch payload (409 storm)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "function _p(xs, q) { if (!xs || !xs.length) return 0; const s=[...xs].sort((a,b)=>a-b); return s[Math.min(s.length-1, Math.floor(q*s.length))]; }",
+                  "function _randomKey() { return Math.random().toString(36).slice(2,10); }",
+                  "function _pickOutcome(sp, fp, xp) { const r=Math.random()*(sp+fp+xp); if (r<sp) return 'success'; if (r<sp+fp) return 'flap'; return 'fail'; }",
+                  "function _pad(kb) { return kb>0 ? 'x'.repeat(kb*1024) : ''; }",
+                  "var _cv = (k,d)=>{const v=pm.variables.get(k);return v==null||v===''?d:v;};",
+                  "var cfg = {",
+                  "  baseUrl: _cv('baseUrl','http://localhost:8080'),",
+                  "  apiKey: _cv('apiKey','demo-api-key-do-not-use-in-prod'),",
+                  "  queue: _cv('queue','default'),",
+                  "  concurrencyN: parseInt(_cv('concurrencyN',10),10),",
+                  "  iterationOps: parseInt(_cv('iterationOps',50),10),",
+                  "  successPct: parseFloat(_cv('successPct',70)),",
+                  "  flapPct: parseFloat(_cv('flapPct',20)),",
+                  "  failPct: parseFloat(_cv('failPct',10)),",
+                  "  idempotentPct: parseFloat(_cv('idempotentPct',30)),",
+                  "  idempotencyDupPct: parseFloat(_cv('idempotencyDupPct',50)),",
+                  "  maxAttempts: parseInt(_cv('maxAttempts',5),10),",
+                  "  payloadKb: parseInt(_cv('payloadKb',0),10),",
+                  "  errorRateThreshold: parseFloat(_cv('errorRateThreshold',0.01)),",
+                  "  p95Threshold: parseInt(_cv('p95Threshold',250),10),",
+                  "  saturateStartConc: parseInt(_cv('saturateStartConc',10),10),",
+                  "  saturateMaxConc: parseInt(_cv('saturateMaxConc',100),10),",
+                  "  saturateStep: parseInt(_cv('saturateStep',10),10)",
+                  "};",
+                  "const N = cfg.iterationOps;",
+                  "const C = Math.max(1, Math.min(cfg.concurrencyN, N));",
+                  "const key = `mismatch-${Date.now()}-${_randomKey()}`;",
+                  "// First, seed the key with a known payload.",
+                  "pm.sendRequest({",
+                  "  url: `${cfg.baseUrl}/v1/jobs`, method: 'POST',",
+                  "  header: { 'Content-Type': 'application/json', 'X-API-Key': cfg.apiKey, 'Idempotency-Key': key },",
+                  "  body: { mode: 'raw', raw: JSON.stringify({ queue: cfg.queue, type: 'echo', payload: { outcome: 'success', seed: true } }) }",
+                  "}, () => {",
+                  "  const stats = { code409: 0, code200: 0, code202: 0, code5xx: 0, other: 0, latencies: [] };",
+                  "  let launched = 0, completed = 0, started = Date.now();",
+                  "  function spawn() {",
+                  "    while (launched - completed < C && launched < N) {",
+                  "      const i = launched++;",
+                  "      const t0 = Date.now();",
+                  "      pm.sendRequest({",
+                  "        url: `${cfg.baseUrl}/v1/jobs`, method: 'POST',",
+                  "        header: { 'Content-Type': 'application/json', 'X-API-Key': cfg.apiKey, 'Idempotency-Key': key },",
+                  "        body: { mode: 'raw', raw: JSON.stringify({ queue: cfg.queue, type: 'echo', payload: { outcome: 'fail', i } }) }",
+                  "      }, (err, res) => {",
+                  "        stats.latencies.push(Date.now() - t0);",
+                  "        if (err || !res) stats.other++;",
+                  "        else if (res.code === 409) stats.code409++;",
+                  "        else if (res.code === 200) stats.code200++;",
+                  "        else if (res.code === 202) stats.code202++;",
+                  "        else if (res.code >= 500) stats.code5xx++;",
+                  "        else stats.other++;",
+                  "        completed++;",
+                  "        if (completed === N) pm.collectionVariables.set('mismatchStorm', JSON.stringify({ ...stats, wallMs: Date.now() - started, N, C }));",
+                  "        else spawn();",
+                  "      });",
+                  "    }",
+                  "  }",
+                  "  spawn();",
+                  "});"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "function _p(xs, q) { if (!xs || !xs.length) return 0; const s=[...xs].sort((a,b)=>a-b); return s[Math.min(s.length-1, Math.floor(q*s.length))]; }",
+                  "function _randomKey() { return Math.random().toString(36).slice(2,10); }",
+                  "function _pickOutcome(sp, fp, xp) { const r=Math.random()*(sp+fp+xp); if (r<sp) return 'success'; if (r<sp+fp) return 'flap'; return 'fail'; }",
+                  "function _pad(kb) { return kb>0 ? 'x'.repeat(kb*1024) : ''; }",
+                  "var _cv = (k,d)=>{const v=pm.variables.get(k);return v==null||v===''?d:v;};",
+                  "var cfg = {",
+                  "  baseUrl: _cv('baseUrl','http://localhost:8080'),",
+                  "  apiKey: _cv('apiKey','demo-api-key-do-not-use-in-prod'),",
+                  "  queue: _cv('queue','default'),",
+                  "  concurrencyN: parseInt(_cv('concurrencyN',10),10),",
+                  "  iterationOps: parseInt(_cv('iterationOps',50),10),",
+                  "  successPct: parseFloat(_cv('successPct',70)),",
+                  "  flapPct: parseFloat(_cv('flapPct',20)),",
+                  "  failPct: parseFloat(_cv('failPct',10)),",
+                  "  idempotentPct: parseFloat(_cv('idempotentPct',30)),",
+                  "  idempotencyDupPct: parseFloat(_cv('idempotencyDupPct',50)),",
+                  "  maxAttempts: parseInt(_cv('maxAttempts',5),10),",
+                  "  payloadKb: parseInt(_cv('payloadKb',0),10),",
+                  "  errorRateThreshold: parseFloat(_cv('errorRateThreshold',0.01)),",
+                  "  p95Threshold: parseInt(_cv('p95Threshold',250),10),",
+                  "  saturateStartConc: parseInt(_cv('saturateStartConc',10),10),",
+                  "  saturateMaxConc: parseInt(_cv('saturateMaxConc',100),10),",
+                  "  saturateStep: parseInt(_cv('saturateStep',10),10)",
+                  "};",
+                  "const r = JSON.parse(pm.collectionVariables.get('mismatchStorm') || '{}');",
+                  "const p95 = _p(r.latencies || [], 0.95);",
+                  "console.log(`mismatchStorm: N=${r.N} C=${r.C} 409=${r.code409} 200=${r.code200} 202=${r.code202} 5xx=${r.code5xx} other=${r.other} p95=${p95}ms`);",
+                  "pm.test('all 409 (every payload mismatched)', () => pm.expect(r.code409).to.eql(r.N));",
+                  "pm.test('no 5xx', () => pm.expect(r.code5xx).to.eql(0));",
+                  "pm.test('no 202 (no fresh submits)', () => pm.expect(r.code202).to.eql(0));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/queues/{{queue}}/stats",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "queues",
+                "{{queue}}",
+                "stats"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "3 \u00b7 Hammer \u00b7 Read-heavy",
+      "item": [
+        {
+          "name": "GET /v1/queues/{queue}/stats \u00d7 N",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "function _p(xs, q) { if (!xs || !xs.length) return 0; const s=[...xs].sort((a,b)=>a-b); return s[Math.min(s.length-1, Math.floor(q*s.length))]; }",
+                  "function _randomKey() { return Math.random().toString(36).slice(2,10); }",
+                  "function _pickOutcome(sp, fp, xp) { const r=Math.random()*(sp+fp+xp); if (r<sp) return 'success'; if (r<sp+fp) return 'flap'; return 'fail'; }",
+                  "function _pad(kb) { return kb>0 ? 'x'.repeat(kb*1024) : ''; }",
+                  "var _cv = (k,d)=>{const v=pm.variables.get(k);return v==null||v===''?d:v;};",
+                  "var cfg = {",
+                  "  baseUrl: _cv('baseUrl','http://localhost:8080'),",
+                  "  apiKey: _cv('apiKey','demo-api-key-do-not-use-in-prod'),",
+                  "  queue: _cv('queue','default'),",
+                  "  concurrencyN: parseInt(_cv('concurrencyN',10),10),",
+                  "  iterationOps: parseInt(_cv('iterationOps',50),10),",
+                  "  successPct: parseFloat(_cv('successPct',70)),",
+                  "  flapPct: parseFloat(_cv('flapPct',20)),",
+                  "  failPct: parseFloat(_cv('failPct',10)),",
+                  "  idempotentPct: parseFloat(_cv('idempotentPct',30)),",
+                  "  idempotencyDupPct: parseFloat(_cv('idempotencyDupPct',50)),",
+                  "  maxAttempts: parseInt(_cv('maxAttempts',5),10),",
+                  "  payloadKb: parseInt(_cv('payloadKb',0),10),",
+                  "  errorRateThreshold: parseFloat(_cv('errorRateThreshold',0.01)),",
+                  "  p95Threshold: parseInt(_cv('p95Threshold',250),10),",
+                  "  saturateStartConc: parseInt(_cv('saturateStartConc',10),10),",
+                  "  saturateMaxConc: parseInt(_cv('saturateMaxConc',100),10),",
+                  "  saturateStep: parseInt(_cv('saturateStep',10),10)",
+                  "};",
+                  "const N = cfg.iterationOps, C = Math.max(1, Math.min(cfg.concurrencyN, N));",
+                  "const stats = { ok: 0, fail: 0, latencies: [] };",
+                  "let launched = 0, completed = 0, started = Date.now();",
+                  "function spawn() {",
+                  "  while (launched - completed < C && launched < N) {",
+                  "    launched++;",
+                  "    const t0 = Date.now();",
+                  "    pm.sendRequest({ url: `${cfg.baseUrl}/v1/queues/${cfg.queue}/stats`, method: 'GET', header: { 'X-API-Key': cfg.apiKey } }, (err, res) => {",
+                  "      stats.latencies.push(Date.now() - t0);",
+                  "      if (!err && res && res.code === 200) stats.ok++; else stats.fail++;",
+                  "      completed++;",
+                  "      if (completed === N) pm.collectionVariables.set('readStats', JSON.stringify({ ...stats, wallMs: Date.now() - started, N, C }));",
+                  "      else spawn();",
+                  "    });",
+                  "  }",
+                  "}",
+                  "spawn();"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "function _p(xs, q) { if (!xs || !xs.length) return 0; const s=[...xs].sort((a,b)=>a-b); return s[Math.min(s.length-1, Math.floor(q*s.length))]; }",
+                  "function _randomKey() { return Math.random().toString(36).slice(2,10); }",
+                  "function _pickOutcome(sp, fp, xp) { const r=Math.random()*(sp+fp+xp); if (r<sp) return 'success'; if (r<sp+fp) return 'flap'; return 'fail'; }",
+                  "function _pad(kb) { return kb>0 ? 'x'.repeat(kb*1024) : ''; }",
+                  "var _cv = (k,d)=>{const v=pm.variables.get(k);return v==null||v===''?d:v;};",
+                  "var cfg = {",
+                  "  baseUrl: _cv('baseUrl','http://localhost:8080'),",
+                  "  apiKey: _cv('apiKey','demo-api-key-do-not-use-in-prod'),",
+                  "  queue: _cv('queue','default'),",
+                  "  concurrencyN: parseInt(_cv('concurrencyN',10),10),",
+                  "  iterationOps: parseInt(_cv('iterationOps',50),10),",
+                  "  successPct: parseFloat(_cv('successPct',70)),",
+                  "  flapPct: parseFloat(_cv('flapPct',20)),",
+                  "  failPct: parseFloat(_cv('failPct',10)),",
+                  "  idempotentPct: parseFloat(_cv('idempotentPct',30)),",
+                  "  idempotencyDupPct: parseFloat(_cv('idempotencyDupPct',50)),",
+                  "  maxAttempts: parseInt(_cv('maxAttempts',5),10),",
+                  "  payloadKb: parseInt(_cv('payloadKb',0),10),",
+                  "  errorRateThreshold: parseFloat(_cv('errorRateThreshold',0.01)),",
+                  "  p95Threshold: parseInt(_cv('p95Threshold',250),10),",
+                  "  saturateStartConc: parseInt(_cv('saturateStartConc',10),10),",
+                  "  saturateMaxConc: parseInt(_cv('saturateMaxConc',100),10),",
+                  "  saturateStep: parseInt(_cv('saturateStep',10),10)",
+                  "};",
+                  "const r = JSON.parse(pm.collectionVariables.get('readStats') || '{}');",
+                  "const p95 = _p(r.latencies || [], 0.95);",
+                  "console.log(`readStats: N=${r.N} ok=${r.ok} fail=${r.fail} p95=${p95}ms wall=${r.wallMs}ms`);",
+                  "pm.test('all 200', () => pm.expect(r.ok).to.eql(r.N));",
+                  "pm.test('no failures', () => pm.expect(r.fail).to.eql(0));",
+                  "pm.test(`p95 < ${cfg.p95Threshold}ms`, () => pm.expect(p95).to.be.below(cfg.p95Threshold));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/queues/{{queue}}/stats",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "queues",
+                "{{queue}}",
+                "stats"
+              ]
+            }
+          }
+        },
+        {
+          "name": "GET /v1/jobs?status=\u2026 \u00d7 N (mixed filters)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "function _p(xs, q) { if (!xs || !xs.length) return 0; const s=[...xs].sort((a,b)=>a-b); return s[Math.min(s.length-1, Math.floor(q*s.length))]; }",
+                  "function _randomKey() { return Math.random().toString(36).slice(2,10); }",
+                  "function _pickOutcome(sp, fp, xp) { const r=Math.random()*(sp+fp+xp); if (r<sp) return 'success'; if (r<sp+fp) return 'flap'; return 'fail'; }",
+                  "function _pad(kb) { return kb>0 ? 'x'.repeat(kb*1024) : ''; }",
+                  "var _cv = (k,d)=>{const v=pm.variables.get(k);return v==null||v===''?d:v;};",
+                  "var cfg = {",
+                  "  baseUrl: _cv('baseUrl','http://localhost:8080'),",
+                  "  apiKey: _cv('apiKey','demo-api-key-do-not-use-in-prod'),",
+                  "  queue: _cv('queue','default'),",
+                  "  concurrencyN: parseInt(_cv('concurrencyN',10),10),",
+                  "  iterationOps: parseInt(_cv('iterationOps',50),10),",
+                  "  successPct: parseFloat(_cv('successPct',70)),",
+                  "  flapPct: parseFloat(_cv('flapPct',20)),",
+                  "  failPct: parseFloat(_cv('failPct',10)),",
+                  "  idempotentPct: parseFloat(_cv('idempotentPct',30)),",
+                  "  idempotencyDupPct: parseFloat(_cv('idempotencyDupPct',50)),",
+                  "  maxAttempts: parseInt(_cv('maxAttempts',5),10),",
+                  "  payloadKb: parseInt(_cv('payloadKb',0),10),",
+                  "  errorRateThreshold: parseFloat(_cv('errorRateThreshold',0.01)),",
+                  "  p95Threshold: parseInt(_cv('p95Threshold',250),10),",
+                  "  saturateStartConc: parseInt(_cv('saturateStartConc',10),10),",
+                  "  saturateMaxConc: parseInt(_cv('saturateMaxConc',100),10),",
+                  "  saturateStep: parseInt(_cv('saturateStep',10),10)",
+                  "};",
+                  "const N = cfg.iterationOps, C = Math.max(1, Math.min(cfg.concurrencyN, N));",
+                  "const filters = ['', 'SUCCEEDED', 'DEAD', 'READY', 'SCHEDULED'];",
+                  "const stats = { ok: 0, fail: 0, latencies: [] };",
+                  "let launched = 0, completed = 0, started = Date.now();",
+                  "function spawn() {",
+                  "  while (launched - completed < C && launched < N) {",
+                  "    const i = launched++;",
+                  "    const f = filters[i % filters.length];",
+                  "    const url = f ? `${cfg.baseUrl}/v1/jobs?status=${f}&limit=20` : `${cfg.baseUrl}/v1/jobs?limit=20`;",
+                  "    const t0 = Date.now();",
+                  "    pm.sendRequest({ url, method: 'GET', header: { 'X-API-Key': cfg.apiKey } }, (err, res) => {",
+                  "      stats.latencies.push(Date.now() - t0);",
+                  "      if (!err && res && res.code === 200) stats.ok++; else stats.fail++;",
+                  "      completed++;",
+                  "      if (completed === N) pm.collectionVariables.set('readJobs', JSON.stringify({ ...stats, wallMs: Date.now() - started, N, C }));",
+                  "      else spawn();",
+                  "    });",
+                  "  }",
+                  "}",
+                  "spawn();"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "function _p(xs, q) { if (!xs || !xs.length) return 0; const s=[...xs].sort((a,b)=>a-b); return s[Math.min(s.length-1, Math.floor(q*s.length))]; }",
+                  "function _randomKey() { return Math.random().toString(36).slice(2,10); }",
+                  "function _pickOutcome(sp, fp, xp) { const r=Math.random()*(sp+fp+xp); if (r<sp) return 'success'; if (r<sp+fp) return 'flap'; return 'fail'; }",
+                  "function _pad(kb) { return kb>0 ? 'x'.repeat(kb*1024) : ''; }",
+                  "var _cv = (k,d)=>{const v=pm.variables.get(k);return v==null||v===''?d:v;};",
+                  "var cfg = {",
+                  "  baseUrl: _cv('baseUrl','http://localhost:8080'),",
+                  "  apiKey: _cv('apiKey','demo-api-key-do-not-use-in-prod'),",
+                  "  queue: _cv('queue','default'),",
+                  "  concurrencyN: parseInt(_cv('concurrencyN',10),10),",
+                  "  iterationOps: parseInt(_cv('iterationOps',50),10),",
+                  "  successPct: parseFloat(_cv('successPct',70)),",
+                  "  flapPct: parseFloat(_cv('flapPct',20)),",
+                  "  failPct: parseFloat(_cv('failPct',10)),",
+                  "  idempotentPct: parseFloat(_cv('idempotentPct',30)),",
+                  "  idempotencyDupPct: parseFloat(_cv('idempotencyDupPct',50)),",
+                  "  maxAttempts: parseInt(_cv('maxAttempts',5),10),",
+                  "  payloadKb: parseInt(_cv('payloadKb',0),10),",
+                  "  errorRateThreshold: parseFloat(_cv('errorRateThreshold',0.01)),",
+                  "  p95Threshold: parseInt(_cv('p95Threshold',250),10),",
+                  "  saturateStartConc: parseInt(_cv('saturateStartConc',10),10),",
+                  "  saturateMaxConc: parseInt(_cv('saturateMaxConc',100),10),",
+                  "  saturateStep: parseInt(_cv('saturateStep',10),10)",
+                  "};",
+                  "const r = JSON.parse(pm.collectionVariables.get('readJobs') || '{}');",
+                  "const p95 = _p(r.latencies || [], 0.95);",
+                  "console.log(`readJobs: N=${r.N} ok=${r.ok} fail=${r.fail} p95=${p95}ms`);",
+                  "pm.test('all 200', () => pm.expect(r.ok).to.eql(r.N));",
+                  "pm.test(`p95 < ${cfg.p95Threshold}ms`, () => pm.expect(p95).to.be.below(cfg.p95Threshold));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/jobs?limit=1",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "jobs"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "1"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "4 \u00b7 Hammer \u00b7 Get-by-id fan-out",
+      "item": [
+        {
+          "name": "Submit 1, then GET /v1/jobs/{id} \u00d7 N",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "function _p(xs, q) { if (!xs || !xs.length) return 0; const s=[...xs].sort((a,b)=>a-b); return s[Math.min(s.length-1, Math.floor(q*s.length))]; }",
+                  "function _randomKey() { return Math.random().toString(36).slice(2,10); }",
+                  "function _pickOutcome(sp, fp, xp) { const r=Math.random()*(sp+fp+xp); if (r<sp) return 'success'; if (r<sp+fp) return 'flap'; return 'fail'; }",
+                  "function _pad(kb) { return kb>0 ? 'x'.repeat(kb*1024) : ''; }",
+                  "var _cv = (k,d)=>{const v=pm.variables.get(k);return v==null||v===''?d:v;};",
+                  "var cfg = {",
+                  "  baseUrl: _cv('baseUrl','http://localhost:8080'),",
+                  "  apiKey: _cv('apiKey','demo-api-key-do-not-use-in-prod'),",
+                  "  queue: _cv('queue','default'),",
+                  "  concurrencyN: parseInt(_cv('concurrencyN',10),10),",
+                  "  iterationOps: parseInt(_cv('iterationOps',50),10),",
+                  "  successPct: parseFloat(_cv('successPct',70)),",
+                  "  flapPct: parseFloat(_cv('flapPct',20)),",
+                  "  failPct: parseFloat(_cv('failPct',10)),",
+                  "  idempotentPct: parseFloat(_cv('idempotentPct',30)),",
+                  "  idempotencyDupPct: parseFloat(_cv('idempotencyDupPct',50)),",
+                  "  maxAttempts: parseInt(_cv('maxAttempts',5),10),",
+                  "  payloadKb: parseInt(_cv('payloadKb',0),10),",
+                  "  errorRateThreshold: parseFloat(_cv('errorRateThreshold',0.01)),",
+                  "  p95Threshold: parseInt(_cv('p95Threshold',250),10),",
+                  "  saturateStartConc: parseInt(_cv('saturateStartConc',10),10),",
+                  "  saturateMaxConc: parseInt(_cv('saturateMaxConc',100),10),",
+                  "  saturateStep: parseInt(_cv('saturateStep',10),10)",
+                  "};",
+                  "const N = cfg.iterationOps, C = Math.max(1, Math.min(cfg.concurrencyN, N));",
+                  "pm.sendRequest({",
+                  "  url: `${cfg.baseUrl}/v1/jobs`, method: 'POST',",
+                  "  header: { 'Content-Type': 'application/json', 'X-API-Key': cfg.apiKey },",
+                  "  body: { mode: 'raw', raw: JSON.stringify({ queue: cfg.queue, type: 'echo', payload: { outcome: 'success' } }) }",
+                  "}, (e, r) => {",
+                  "  const id = (!e && r && r.code === 202) ? r.json().id : null;",
+                  "  if (!id) { pm.collectionVariables.set('fanout', JSON.stringify({ N, ok: 0, fail: N, latencies: [] })); return; }",
+                  "  const stats = { ok: 0, fail: 0, latencies: [] };",
+                  "  let launched = 0, completed = 0, started = Date.now();",
+                  "  function spawn() {",
+                  "    while (launched - completed < C && launched < N) {",
+                  "      launched++;",
+                  "      const t0 = Date.now();",
+                  "      pm.sendRequest({ url: `${cfg.baseUrl}/v1/jobs/${id}`, method: 'GET', header: { 'X-API-Key': cfg.apiKey } }, (e2, r2) => {",
+                  "        stats.latencies.push(Date.now() - t0);",
+                  "        if (!e2 && r2 && r2.code === 200) stats.ok++; else stats.fail++;",
+                  "        completed++;",
+                  "        if (completed === N) pm.collectionVariables.set('fanout', JSON.stringify({ ...stats, wallMs: Date.now() - started, N, C, id }));",
+                  "        else spawn();",
+                  "      });",
+                  "    }",
+                  "  }",
+                  "  spawn();",
+                  "});"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "function _p(xs, q) { if (!xs || !xs.length) return 0; const s=[...xs].sort((a,b)=>a-b); return s[Math.min(s.length-1, Math.floor(q*s.length))]; }",
+                  "function _randomKey() { return Math.random().toString(36).slice(2,10); }",
+                  "function _pickOutcome(sp, fp, xp) { const r=Math.random()*(sp+fp+xp); if (r<sp) return 'success'; if (r<sp+fp) return 'flap'; return 'fail'; }",
+                  "function _pad(kb) { return kb>0 ? 'x'.repeat(kb*1024) : ''; }",
+                  "var _cv = (k,d)=>{const v=pm.variables.get(k);return v==null||v===''?d:v;};",
+                  "var cfg = {",
+                  "  baseUrl: _cv('baseUrl','http://localhost:8080'),",
+                  "  apiKey: _cv('apiKey','demo-api-key-do-not-use-in-prod'),",
+                  "  queue: _cv('queue','default'),",
+                  "  concurrencyN: parseInt(_cv('concurrencyN',10),10),",
+                  "  iterationOps: parseInt(_cv('iterationOps',50),10),",
+                  "  successPct: parseFloat(_cv('successPct',70)),",
+                  "  flapPct: parseFloat(_cv('flapPct',20)),",
+                  "  failPct: parseFloat(_cv('failPct',10)),",
+                  "  idempotentPct: parseFloat(_cv('idempotentPct',30)),",
+                  "  idempotencyDupPct: parseFloat(_cv('idempotencyDupPct',50)),",
+                  "  maxAttempts: parseInt(_cv('maxAttempts',5),10),",
+                  "  payloadKb: parseInt(_cv('payloadKb',0),10),",
+                  "  errorRateThreshold: parseFloat(_cv('errorRateThreshold',0.01)),",
+                  "  p95Threshold: parseInt(_cv('p95Threshold',250),10),",
+                  "  saturateStartConc: parseInt(_cv('saturateStartConc',10),10),",
+                  "  saturateMaxConc: parseInt(_cv('saturateMaxConc',100),10),",
+                  "  saturateStep: parseInt(_cv('saturateStep',10),10)",
+                  "};",
+                  "const r = JSON.parse(pm.collectionVariables.get('fanout') || '{}');",
+                  "const p95 = _p(r.latencies || [], 0.95);",
+                  "console.log(`fanout id=${r.id}: N=${r.N} ok=${r.ok} fail=${r.fail} p95=${p95}ms`);",
+                  "pm.test('all 200', () => pm.expect(r.ok).to.eql(r.N));",
+                  "pm.test(`p95 < ${cfg.p95Threshold}ms`, () => pm.expect(p95).to.be.below(cfg.p95Threshold));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/queues/{{queue}}/stats",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "queues",
+                "{{queue}}",
+                "stats"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "5 \u00b7 Hammer \u00b7 DLQ flood + replay storm",
+      "item": [
+        {
+          "name": "Step A \u00b7 flood DLQ (fail jobs, maxAttempts=1)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "function _p(xs, q) { if (!xs || !xs.length) return 0; const s=[...xs].sort((a,b)=>a-b); return s[Math.min(s.length-1, Math.floor(q*s.length))]; }",
+                  "function _randomKey() { return Math.random().toString(36).slice(2,10); }",
+                  "function _pickOutcome(sp, fp, xp) { const r=Math.random()*(sp+fp+xp); if (r<sp) return 'success'; if (r<sp+fp) return 'flap'; return 'fail'; }",
+                  "function _pad(kb) { return kb>0 ? 'x'.repeat(kb*1024) : ''; }",
+                  "var _cv = (k,d)=>{const v=pm.variables.get(k);return v==null||v===''?d:v;};",
+                  "var cfg = {",
+                  "  baseUrl: _cv('baseUrl','http://localhost:8080'),",
+                  "  apiKey: _cv('apiKey','demo-api-key-do-not-use-in-prod'),",
+                  "  queue: _cv('queue','default'),",
+                  "  concurrencyN: parseInt(_cv('concurrencyN',10),10),",
+                  "  iterationOps: parseInt(_cv('iterationOps',50),10),",
+                  "  successPct: parseFloat(_cv('successPct',70)),",
+                  "  flapPct: parseFloat(_cv('flapPct',20)),",
+                  "  failPct: parseFloat(_cv('failPct',10)),",
+                  "  idempotentPct: parseFloat(_cv('idempotentPct',30)),",
+                  "  idempotencyDupPct: parseFloat(_cv('idempotencyDupPct',50)),",
+                  "  maxAttempts: parseInt(_cv('maxAttempts',5),10),",
+                  "  payloadKb: parseInt(_cv('payloadKb',0),10),",
+                  "  errorRateThreshold: parseFloat(_cv('errorRateThreshold',0.01)),",
+                  "  p95Threshold: parseInt(_cv('p95Threshold',250),10),",
+                  "  saturateStartConc: parseInt(_cv('saturateStartConc',10),10),",
+                  "  saturateMaxConc: parseInt(_cv('saturateMaxConc',100),10),",
+                  "  saturateStep: parseInt(_cv('saturateStep',10),10)",
+                  "};",
+                  "const N = cfg.iterationOps, C = Math.max(1, Math.min(cfg.concurrencyN, N));",
+                  "const ids = [];",
+                  "let launched = 0, completed = 0, started = Date.now(), ok = 0, fail = 0;",
+                  "function spawn() {",
+                  "  while (launched - completed < C && launched < N) {",
+                  "    const i = launched++;",
+                  "    pm.sendRequest({",
+                  "      url: `${cfg.baseUrl}/v1/jobs`, method: 'POST',",
+                  "      header: { 'Content-Type': 'application/json', 'X-API-Key': cfg.apiKey },",
+                  "      body: { mode: 'raw', raw: JSON.stringify({ queue: cfg.queue, type: 'echo', payload: { outcome: 'fail', i }, maxAttempts: 1 }) }",
+                  "    }, (e, r) => {",
+                  "      if (!e && r && r.code === 202) { ok++; try { ids.push(r.json().id); } catch(_){} } else fail++;",
+                  "      completed++;",
+                  "      if (completed === N) pm.collectionVariables.set('dlqFlood', JSON.stringify({ N, C, ok, fail, ids, wallMs: Date.now() - started }));",
+                  "      else spawn();",
+                  "    });",
+                  "  }",
+                  "}",
+                  "spawn();"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = JSON.parse(pm.collectionVariables.get('dlqFlood') || '{}');",
+                  "console.log(`dlqFlood: N=${r.N} ok=${r.ok} fail=${r.fail} wall=${r.wallMs}ms`);",
+                  "pm.test('all submits accepted', () => pm.expect(r.ok).to.eql(r.N));",
+                  "pm.test('no submit errors', () => pm.expect(r.fail).to.eql(0));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/queues/{{queue}}/stats",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "queues",
+                "{{queue}}",
+                "stats"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Step B \u00b7 wait 6s for DLQ population",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const t = Date.now(); while (Date.now() - t < 6000) {}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/dlq?limit=1",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "dlq"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "1"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Step C \u00b7 replay storm (concurrent /dlq/{id}/replay)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "function _p(xs, q) { if (!xs || !xs.length) return 0; const s=[...xs].sort((a,b)=>a-b); return s[Math.min(s.length-1, Math.floor(q*s.length))]; }",
+                  "function _randomKey() { return Math.random().toString(36).slice(2,10); }",
+                  "function _pickOutcome(sp, fp, xp) { const r=Math.random()*(sp+fp+xp); if (r<sp) return 'success'; if (r<sp+fp) return 'flap'; return 'fail'; }",
+                  "function _pad(kb) { return kb>0 ? 'x'.repeat(kb*1024) : ''; }",
+                  "var _cv = (k,d)=>{const v=pm.variables.get(k);return v==null||v===''?d:v;};",
+                  "var cfg = {",
+                  "  baseUrl: _cv('baseUrl','http://localhost:8080'),",
+                  "  apiKey: _cv('apiKey','demo-api-key-do-not-use-in-prod'),",
+                  "  queue: _cv('queue','default'),",
+                  "  concurrencyN: parseInt(_cv('concurrencyN',10),10),",
+                  "  iterationOps: parseInt(_cv('iterationOps',50),10),",
+                  "  successPct: parseFloat(_cv('successPct',70)),",
+                  "  flapPct: parseFloat(_cv('flapPct',20)),",
+                  "  failPct: parseFloat(_cv('failPct',10)),",
+                  "  idempotentPct: parseFloat(_cv('idempotentPct',30)),",
+                  "  idempotencyDupPct: parseFloat(_cv('idempotencyDupPct',50)),",
+                  "  maxAttempts: parseInt(_cv('maxAttempts',5),10),",
+                  "  payloadKb: parseInt(_cv('payloadKb',0),10),",
+                  "  errorRateThreshold: parseFloat(_cv('errorRateThreshold',0.01)),",
+                  "  p95Threshold: parseInt(_cv('p95Threshold',250),10),",
+                  "  saturateStartConc: parseInt(_cv('saturateStartConc',10),10),",
+                  "  saturateMaxConc: parseInt(_cv('saturateMaxConc',100),10),",
+                  "  saturateStep: parseInt(_cv('saturateStep',10),10)",
+                  "};",
+                  "pm.sendRequest({ url: `${cfg.baseUrl}/v1/dlq?limit=${cfg.iterationOps}`, method: 'GET', header: { 'X-API-Key': cfg.apiKey } }, (e, r) => {",
+                  "  const items = (!e && r && r.code === 200) ? (r.json().items || []) : [];",
+                  "  const N = items.length, C = Math.max(1, Math.min(cfg.concurrencyN, Math.max(N, 1)));",
+                  "  if (!N) { pm.collectionVariables.set('replayStorm', JSON.stringify({ N: 0, ok: 0, fail: 0, latencies: [] })); return; }",
+                  "  const stats = { ok: 0, fail: 0, latencies: [] };",
+                  "  let launched = 0, completed = 0, started = Date.now();",
+                  "  function spawn() {",
+                  "    while (launched - completed < C && launched < N) {",
+                  "      const id = items[launched++].id;",
+                  "      const t0 = Date.now();",
+                  "      pm.sendRequest({ url: `${cfg.baseUrl}/v1/dlq/${id}/replay`, method: 'POST', header: { 'X-API-Key': cfg.apiKey } }, (e2, r2) => {",
+                  "        stats.latencies.push(Date.now() - t0);",
+                  "        if (!e2 && r2 && r2.code === 200) stats.ok++; else stats.fail++;",
+                  "        completed++;",
+                  "        if (completed === N) pm.collectionVariables.set('replayStorm', JSON.stringify({ ...stats, wallMs: Date.now() - started, N, C }));",
+                  "        else spawn();",
+                  "      });",
+                  "    }",
+                  "  }",
+                  "  spawn();",
+                  "});"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "function _p(xs, q) { if (!xs || !xs.length) return 0; const s=[...xs].sort((a,b)=>a-b); return s[Math.min(s.length-1, Math.floor(q*s.length))]; }",
+                  "function _randomKey() { return Math.random().toString(36).slice(2,10); }",
+                  "function _pickOutcome(sp, fp, xp) { const r=Math.random()*(sp+fp+xp); if (r<sp) return 'success'; if (r<sp+fp) return 'flap'; return 'fail'; }",
+                  "function _pad(kb) { return kb>0 ? 'x'.repeat(kb*1024) : ''; }",
+                  "var _cv = (k,d)=>{const v=pm.variables.get(k);return v==null||v===''?d:v;};",
+                  "var cfg = {",
+                  "  baseUrl: _cv('baseUrl','http://localhost:8080'),",
+                  "  apiKey: _cv('apiKey','demo-api-key-do-not-use-in-prod'),",
+                  "  queue: _cv('queue','default'),",
+                  "  concurrencyN: parseInt(_cv('concurrencyN',10),10),",
+                  "  iterationOps: parseInt(_cv('iterationOps',50),10),",
+                  "  successPct: parseFloat(_cv('successPct',70)),",
+                  "  flapPct: parseFloat(_cv('flapPct',20)),",
+                  "  failPct: parseFloat(_cv('failPct',10)),",
+                  "  idempotentPct: parseFloat(_cv('idempotentPct',30)),",
+                  "  idempotencyDupPct: parseFloat(_cv('idempotencyDupPct',50)),",
+                  "  maxAttempts: parseInt(_cv('maxAttempts',5),10),",
+                  "  payloadKb: parseInt(_cv('payloadKb',0),10),",
+                  "  errorRateThreshold: parseFloat(_cv('errorRateThreshold',0.01)),",
+                  "  p95Threshold: parseInt(_cv('p95Threshold',250),10),",
+                  "  saturateStartConc: parseInt(_cv('saturateStartConc',10),10),",
+                  "  saturateMaxConc: parseInt(_cv('saturateMaxConc',100),10),",
+                  "  saturateStep: parseInt(_cv('saturateStep',10),10)",
+                  "};",
+                  "const r = JSON.parse(pm.collectionVariables.get('replayStorm') || '{}');",
+                  "const p95 = _p(r.latencies || [], 0.95);",
+                  "console.log(`replayStorm: N=${r.N} ok=${r.ok} fail=${r.fail} p95=${p95}ms`);",
+                  "if (r.N > 0) pm.test('all replays succeeded', () => pm.expect(r.ok).to.eql(r.N));",
+                  "if (r.N > 0) pm.test(`p95 < ${cfg.p95Threshold}ms`, () => pm.expect(p95).to.be.below(cfg.p95Threshold));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/queues/{{queue}}/stats",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "queues",
+                "{{queue}}",
+                "stats"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "6 \u00b7 Hammer \u00b7 Saturate (escalating concurrency)",
+      "item": [
+        {
+          "name": "Ramp concurrency until error budget exceeded",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "function _p(xs, q) { if (!xs || !xs.length) return 0; const s=[...xs].sort((a,b)=>a-b); return s[Math.min(s.length-1, Math.floor(q*s.length))]; }",
+                  "function _randomKey() { return Math.random().toString(36).slice(2,10); }",
+                  "function _pickOutcome(sp, fp, xp) { const r=Math.random()*(sp+fp+xp); if (r<sp) return 'success'; if (r<sp+fp) return 'flap'; return 'fail'; }",
+                  "function _pad(kb) { return kb>0 ? 'x'.repeat(kb*1024) : ''; }",
+                  "var _cv = (k,d)=>{const v=pm.variables.get(k);return v==null||v===''?d:v;};",
+                  "var cfg = {",
+                  "  baseUrl: _cv('baseUrl','http://localhost:8080'),",
+                  "  apiKey: _cv('apiKey','demo-api-key-do-not-use-in-prod'),",
+                  "  queue: _cv('queue','default'),",
+                  "  concurrencyN: parseInt(_cv('concurrencyN',10),10),",
+                  "  iterationOps: parseInt(_cv('iterationOps',50),10),",
+                  "  successPct: parseFloat(_cv('successPct',70)),",
+                  "  flapPct: parseFloat(_cv('flapPct',20)),",
+                  "  failPct: parseFloat(_cv('failPct',10)),",
+                  "  idempotentPct: parseFloat(_cv('idempotentPct',30)),",
+                  "  idempotencyDupPct: parseFloat(_cv('idempotencyDupPct',50)),",
+                  "  maxAttempts: parseInt(_cv('maxAttempts',5),10),",
+                  "  payloadKb: parseInt(_cv('payloadKb',0),10),",
+                  "  errorRateThreshold: parseFloat(_cv('errorRateThreshold',0.01)),",
+                  "  p95Threshold: parseInt(_cv('p95Threshold',250),10),",
+                  "  saturateStartConc: parseInt(_cv('saturateStartConc',10),10),",
+                  "  saturateMaxConc: parseInt(_cv('saturateMaxConc',100),10),",
+                  "  saturateStep: parseInt(_cv('saturateStep',10),10)",
+                  "};",
+                  "const opsPerLevel = Math.max(20, Math.floor(cfg.iterationOps / 2));",
+                  "const levels = [];",
+                  "for (let c = cfg.saturateStartConc; c <= cfg.saturateMaxConc; c += cfg.saturateStep) levels.push(c);",
+                  "const results = [];",
+                  "let levelIdx = 0;",
+                  "function runLevel() {",
+                  "  if (levelIdx >= levels.length) return finalize();",
+                  "  const C = levels[levelIdx++];",
+                  "  const N = opsPerLevel;",
+                  "  let launched = 0, completed = 0, started = Date.now(), ok = 0, fail = 0, fivexx = 0;",
+                  "  const lats = [];",
+                  "  function spawn() {",
+                  "    while (launched - completed < C && launched < N) {",
+                  "      const i = launched++;",
+                  "      const t0 = Date.now();",
+                  "      pm.sendRequest({",
+                  "        url: `${cfg.baseUrl}/v1/jobs`, method: 'POST',",
+                  "        header: { 'Content-Type': 'application/json', 'X-API-Key': cfg.apiKey },",
+                  "        body: { mode: 'raw', raw: JSON.stringify({ queue: cfg.queue, type: 'echo', payload: { outcome: 'success', i } }) }",
+                  "      }, (e, r) => {",
+                  "        lats.push(Date.now() - t0);",
+                  "        if (!e && r && r.code >= 200 && r.code < 300) ok++; else fail++;",
+                  "        if (r && r.code >= 500) fivexx++;",
+                  "        completed++;",
+                  "        if (completed === N) {",
+                  "          const errRate = fail / N;",
+                  "          const p95 = _p(lats, 0.95);",
+                  "          const rps = N * 1000 / Math.max(1, Date.now() - started);",
+                  "          results.push({ C, N, ok, fail, fivexx, p95, rps: Math.round(rps), wall: Date.now() - started });",
+                  "          if (errRate > cfg.errorRateThreshold || fivexx > 0) finalize();",
+                  "          else runLevel();",
+                  "        } else spawn();",
+                  "      });",
+                  "    }",
+                  "  }",
+                  "  spawn();",
+                  "}",
+                  "function finalize() { pm.collectionVariables.set('saturate', JSON.stringify({ levels: results, knee: results[results.length - 1] })); }",
+                  "runLevel();"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "function _p(xs, q) { if (!xs || !xs.length) return 0; const s=[...xs].sort((a,b)=>a-b); return s[Math.min(s.length-1, Math.floor(q*s.length))]; }",
+                  "function _randomKey() { return Math.random().toString(36).slice(2,10); }",
+                  "function _pickOutcome(sp, fp, xp) { const r=Math.random()*(sp+fp+xp); if (r<sp) return 'success'; if (r<sp+fp) return 'flap'; return 'fail'; }",
+                  "function _pad(kb) { return kb>0 ? 'x'.repeat(kb*1024) : ''; }",
+                  "var _cv = (k,d)=>{const v=pm.variables.get(k);return v==null||v===''?d:v;};",
+                  "var cfg = {",
+                  "  baseUrl: _cv('baseUrl','http://localhost:8080'),",
+                  "  apiKey: _cv('apiKey','demo-api-key-do-not-use-in-prod'),",
+                  "  queue: _cv('queue','default'),",
+                  "  concurrencyN: parseInt(_cv('concurrencyN',10),10),",
+                  "  iterationOps: parseInt(_cv('iterationOps',50),10),",
+                  "  successPct: parseFloat(_cv('successPct',70)),",
+                  "  flapPct: parseFloat(_cv('flapPct',20)),",
+                  "  failPct: parseFloat(_cv('failPct',10)),",
+                  "  idempotentPct: parseFloat(_cv('idempotentPct',30)),",
+                  "  idempotencyDupPct: parseFloat(_cv('idempotencyDupPct',50)),",
+                  "  maxAttempts: parseInt(_cv('maxAttempts',5),10),",
+                  "  payloadKb: parseInt(_cv('payloadKb',0),10),",
+                  "  errorRateThreshold: parseFloat(_cv('errorRateThreshold',0.01)),",
+                  "  p95Threshold: parseInt(_cv('p95Threshold',250),10),",
+                  "  saturateStartConc: parseInt(_cv('saturateStartConc',10),10),",
+                  "  saturateMaxConc: parseInt(_cv('saturateMaxConc',100),10),",
+                  "  saturateStep: parseInt(_cv('saturateStep',10),10)",
+                  "};",
+                  "const r = JSON.parse(pm.collectionVariables.get('saturate') || '{}');",
+                  "console.log('saturate ramp:');",
+                  "(r.levels || []).forEach(l => console.log(`  C=${l.C}  ok=${l.ok}/${l.N}  5xx=${l.fivexx}  p95=${l.p95}ms  rps=${l.rps}`));",
+                  "if (r.knee) console.log(`>> knee: C=${r.knee.C} errRate=${(r.knee.fail/r.knee.N).toFixed(4)} 5xx=${r.knee.fivexx}`);",
+                  "pm.test('reached at least 1 successful level', () => pm.expect((r.levels || []).length).to.be.at.least(1));",
+                  "// Soft assertion: surface where the system started misbehaving without failing the test.",
+                  "const breachedLevels = (r.levels || []).filter(l => l.fivexx > 0 || (l.fail / l.N) > cfg.errorRateThreshold);",
+                  "if (breachedLevels.length) pm.test(`saturation knee found at C=${breachedLevels[0].C}`, () => pm.expect(true).to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/queues/{{queue}}/stats",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "queues",
+                "{{queue}}",
+                "stats"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "7 \u00b7 Hammer \u00b7 Payload size stress",
+      "item": [
+        {
+          "name": "Submit at varying payload sizes (1, 16, 64, 256 KiB)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "function _p(xs, q) { if (!xs || !xs.length) return 0; const s=[...xs].sort((a,b)=>a-b); return s[Math.min(s.length-1, Math.floor(q*s.length))]; }",
+                  "function _randomKey() { return Math.random().toString(36).slice(2,10); }",
+                  "function _pickOutcome(sp, fp, xp) { const r=Math.random()*(sp+fp+xp); if (r<sp) return 'success'; if (r<sp+fp) return 'flap'; return 'fail'; }",
+                  "function _pad(kb) { return kb>0 ? 'x'.repeat(kb*1024) : ''; }",
+                  "var _cv = (k,d)=>{const v=pm.variables.get(k);return v==null||v===''?d:v;};",
+                  "var cfg = {",
+                  "  baseUrl: _cv('baseUrl','http://localhost:8080'),",
+                  "  apiKey: _cv('apiKey','demo-api-key-do-not-use-in-prod'),",
+                  "  queue: _cv('queue','default'),",
+                  "  concurrencyN: parseInt(_cv('concurrencyN',10),10),",
+                  "  iterationOps: parseInt(_cv('iterationOps',50),10),",
+                  "  successPct: parseFloat(_cv('successPct',70)),",
+                  "  flapPct: parseFloat(_cv('flapPct',20)),",
+                  "  failPct: parseFloat(_cv('failPct',10)),",
+                  "  idempotentPct: parseFloat(_cv('idempotentPct',30)),",
+                  "  idempotencyDupPct: parseFloat(_cv('idempotencyDupPct',50)),",
+                  "  maxAttempts: parseInt(_cv('maxAttempts',5),10),",
+                  "  payloadKb: parseInt(_cv('payloadKb',0),10),",
+                  "  errorRateThreshold: parseFloat(_cv('errorRateThreshold',0.01)),",
+                  "  p95Threshold: parseInt(_cv('p95Threshold',250),10),",
+                  "  saturateStartConc: parseInt(_cv('saturateStartConc',10),10),",
+                  "  saturateMaxConc: parseInt(_cv('saturateMaxConc',100),10),",
+                  "  saturateStep: parseInt(_cv('saturateStep',10),10)",
+                  "};",
+                  "const sizes = [1, 16, 64, 256];",
+                  "const N_PER = Math.max(5, Math.floor(cfg.iterationOps / sizes.length));",
+                  "const results = [];",
+                  "let sIdx = 0;",
+                  "function runSize() {",
+                  "  if (sIdx >= sizes.length) { pm.collectionVariables.set('sizeStress', JSON.stringify({ results })); return; }",
+                  "  const kb = sizes[sIdx++];",
+                  "  const padding = 'x'.repeat(kb * 1024);",
+                  "  let done = 0, ok = 0, fail = 0, p413 = 0, fivexx = 0;",
+                  "  const lats = [];",
+                  "  for (let i = 0; i < N_PER; i++) {",
+                  "    const t0 = Date.now();",
+                  "    pm.sendRequest({",
+                  "      url: `${cfg.baseUrl}/v1/jobs`, method: 'POST',",
+                  "      header: { 'Content-Type': 'application/json', 'X-API-Key': cfg.apiKey },",
+                  "      body: { mode: 'raw', raw: JSON.stringify({ queue: cfg.queue, type: 'echo', payload: { outcome: 'success', padding } }) }",
+                  "    }, (e, r) => {",
+                  "      lats.push(Date.now() - t0);",
+                  "      if (!e && r && r.code === 202) ok++;",
+                  "      else if (r && r.code === 413) p413++;",
+                  "      else if (r && r.code >= 500) { fail++; fivexx++; }",
+                  "      else fail++;",
+                  "      done++;",
+                  "      if (done === N_PER) {",
+                  "        results.push({ kb, N: N_PER, ok, fail, p413, fivexx, p95: _p(lats, 0.95) });",
+                  "        runSize();",
+                  "      }",
+                  "    });",
+                  "  }",
+                  "}",
+                  "runSize();"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = JSON.parse(pm.collectionVariables.get('sizeStress') || '{}');",
+                  "(r.results || []).forEach(x => console.log(`  ${String(x.kb).padStart(3)}KiB: ok=${x.ok} 413=${x.p413} 5xx=${x.fivexx} p95=${x.p95}ms`));",
+                  "pm.test('no 5xx at any size (413 is OK if over limit)', () => {",
+                  "  (r.results || []).forEach(x => pm.expect(x.fivexx, `size=${x.kb}KiB`).to.eql(0));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/queues/{{queue}}/stats",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "queues",
+                "{{queue}}",
+                "stats"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "8 \u00b7 Verify \u00b7 Metrics summary",
+      "item": [
+        {
+          "name": "GET /actuator/prometheus and assert against thresholds",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "auth": {
+              "type": "noauth"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/actuator/prometheus",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "actuator",
+                "prometheus"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const text = pm.response.text();",
+                  "function valOf(name, labelMatch) {",
+                  "  const re = new RegExp(`^${name}(?:\\\\{[^}]*${labelMatch}[^}]*\\\\})?\\\\s+([0-9eE.+-]+)`, 'm');",
+                  "  const m = text.match(re); return m ? parseFloat(m[1]) : null;",
+                  "}",
+                  "function sumOf(name, labelMatch) {",
+                  "  const re = new RegExp(`^${name}\\\\{[^}]*${labelMatch}[^}]*\\\\}\\\\s+([0-9eE.+-]+)`, 'gm');",
+                  "  let total = 0, m;",
+                  "  while ((m = re.exec(text)) !== null) total += parseFloat(m[1]);",
+                  "  return total;",
+                  "}",
+                  "const live = valOf('jvm_threads_live_threads', '');",
+                  "const heapUsedAll = sumOf('jvm_memory_used_bytes', 'area=\"heap\"');",
+                  "const heapMaxAll  = sumOf('jvm_memory_max_bytes', 'area=\"heap\"');",
+                  "const heapPct = heapMaxAll > 0 ? heapUsedAll / heapMaxAll : 0;",
+                  "const hikariActive = valOf('hikaricp_connections_active', '');",
+                  "const hikariPending = valOf('hikaricp_connections_pending', '');",
+                  "const fivexx = sumOf('http_server_requests_seconds_count', 'status=\"5');",
+                  "const fourxx = sumOf('http_server_requests_seconds_count', 'status=\"4');",
+                  "const summary = { liveThreads: live, heapPct: +heapPct.toFixed(3), hikariActive, hikariPending, total5xx: fivexx, total4xx: fourxx };",
+                  "console.log('metrics summary:', JSON.stringify(summary));",
+                  "pm.test('JVM live threads < 500 (vthread sanity)', () => pm.expect(live).to.be.below(500));",
+                  "pm.test('heap utilisation < 95%', () => pm.expect(heapPct).to.be.below(0.95));",
+                  "pm.test('Hikari pending == 0', () => pm.expect(hikariPending).to.eql(0));",
+                  "pm.test('Hikari active sane', () => pm.expect(hikariActive).to.be.below(50));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET Prometheus ALERTS (firing now)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "auth": {
+              "type": "noauth"
+            },
+            "url": {
+              "raw": "http://localhost:9090/api/v1/query?query=ALERTS%7Balertstate%3D%22firing%22%7D",
+              "protocol": "http",
+              "host": [
+                "localhost"
+              ],
+              "port": "9090",
+              "path": [
+                "api",
+                "v1",
+                "query"
+              ],
+              "query": [
+                {
+                  "key": "query",
+                  "value": "ALERTS{alertstate=\"firing\"}"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code !== 200) {",
+                  "  console.log('Prometheus not reachable on :9090; skipping alert assertion');",
+                  "  return;",
+                  "}",
+                  "const j = pm.response.json();",
+                  "const firing = (j.data && j.data.result) || [];",
+                  "console.log(`firing alerts: ${firing.length}`);",
+                  "firing.forEach(a => console.log(`  - ${a.metric.alertname} severity=${a.metric.severity} component=${a.metric.component || '-'}`));",
+                  "pm.test('no critical alerts firing', () => {",
+                  "  const crit = firing.filter(a => a.metric.severity === 'critical');",
+                  "  pm.expect(crit, JSON.stringify(crit)).to.have.length(0);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

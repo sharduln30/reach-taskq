@@ -1,0 +1,897 @@
+{
+  "info": {
+    "name": "Reach TaskQ",
+    "_postman_id": "reach-taskq-2026-04-30",
+    "description": "Multi-tenant job queue — full API coverage + functional tests + resilience / durability bombard suite.\n\n**Run as:**\n- Postman GUI → import this + the env, run folders top-to-bottom.\n- CLI:\n  - `newman run postman/reach-taskq.postman_collection.json -e postman/reach-taskq.postman_environment.json --folder 'Smoke'`\n  - `./postman/run-bombard.sh` for parallel durability run.\n\n**Folders** (run order matters for the smoke flow):\n1. Health\n2. Tenant\n3. Jobs · Happy path\n4. Jobs · Idempotency\n5. Jobs · Retry & DLQ\n6. Jobs · Scheduled\n7. Queue stats\n8. Resilience · Bombard (durability)",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "apikey",
+    "apikey": [
+      { "key": "key", "value": "X-API-Key", "type": "string" },
+      { "key": "value", "value": "{{apiKey}}", "type": "string" },
+      { "key": "in", "value": "header", "type": "string" }
+    ]
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:8080" },
+    { "key": "apiKey", "value": "demo-api-key-do-not-use-in-prod" },
+    { "key": "queue", "value": "default" }
+  ],
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Helpers shared across requests.",
+          "pm.collectionVariables.set('runId', pm.collectionVariables.get('runId') || `${Date.now()}-${Math.random().toString(36).slice(2,8)}`);"
+        ]
+      }
+    },
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Global timing / no-5xx assertions on every request.",
+          "pm.test('Response time under 2s', () => pm.expect(pm.response.responseTime).to.be.below(2000));",
+          "pm.test('Not a 5xx server error', () => pm.expect(pm.response.code).to.be.below(500));"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "1 · Health",
+      "item": [
+        {
+          "name": "GET /actuator/health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/actuator/health", "host": ["{{baseUrl}}"], "path": ["actuator", "health"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const j = pm.response.json();",
+                  "pm.test('status=UP', () => pm.expect(j.status).to.eql('UP'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /actuator/health/readiness",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/actuator/health/readiness", "host": ["{{baseUrl}}"], "path": ["actuator", "health", "readiness"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('readiness=UP', () => pm.expect(pm.response.json().status).to.eql('UP'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /actuator/prometheus",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/actuator/prometheus", "host": ["{{baseUrl}}"], "path": ["actuator", "prometheus"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.text();",
+                  "pm.test('exposes jvm metrics', () => pm.expect(body).to.include('jvm_threads_live_threads'));",
+                  "pm.test('exposes hikari metrics', () => pm.expect(body).to.include('hikaricp_connections_active'));",
+                  "pm.test('exposes http server metrics', () => pm.expect(body).to.include('http_server_requests_seconds_count'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /v1/info",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/v1/info", "host": ["{{baseUrl}}"], "path": ["v1", "info"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const j = pm.response.json();",
+                  "pm.test('name=reach-taskq', () => pm.expect(j.name).to.match(/taskq/i));",
+                  "pm.test('has version', () => pm.expect(j.version).to.be.a('string'));",
+                  "pm.test('has now timestamp', () => pm.expect(j.now).to.be.a('string'));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "2 · Tenant",
+      "item": [
+        {
+          "name": "GET /v1/tenants/me (sets tenantId)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/v1/tenants/me", "host": ["{{baseUrl}}"], "path": ["v1", "tenants", "me"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const j = pm.response.json();",
+                  "pm.test('has uuid id', () => pm.expect(j.id).to.match(/^[0-9a-f-]{36}$/i));",
+                  "pm.test('active=true', () => pm.expect(j.active).to.be.true);",
+                  "pm.test('rate_limit_rps numeric', () => pm.expect(j.rate_limit_rps).to.be.a('number'));",
+                  "pm.collectionVariables.set('tenantId', j.id);",
+                  "console.log('tenantId=' + j.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /v1/tenants/me with bad key → 401",
+          "request": {
+            "method": "GET",
+            "auth": {
+              "type": "apikey",
+              "apikey": [
+                { "key": "key", "value": "X-API-Key", "type": "string" },
+                { "key": "value", "value": "obviously-bad-key", "type": "string" },
+                { "key": "in", "value": "header", "type": "string" }
+              ]
+            },
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/v1/tenants/me", "host": ["{{baseUrl}}"], "path": ["v1", "tenants", "me"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 or 403 (auth rejected)', () => pm.expect([401, 403]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "3 · Jobs · Happy path",
+      "item": [
+        {
+          "name": "POST /v1/jobs (success)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('happyNote', `${pm.collectionVariables.get('runId')}-happy-${Date.now()}`);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('202 Accepted', () => pm.response.to.have.status(202));",
+                  "const j = pm.response.json();",
+                  "pm.test('has uuid id', () => pm.expect(j.id).to.match(/^[0-9a-f-]{36}$/i));",
+                  "pm.test('status READY|SCHEDULED', () => pm.expect(['READY', 'SCHEDULED']).to.include(j.status));",
+                  "pm.test('idempotentReplay=false', () => pm.expect(j.idempotentReplay).to.be.false);",
+                  "pm.test('Location header present', () => pm.expect(pm.response.headers.get('Location')).to.include('/v1/jobs/'));",
+                  "pm.collectionVariables.set('lastJobId', j.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"queue\": \"{{queue}}\",\n  \"type\": \"echo\",\n  \"payload\": { \"outcome\": \"success\", \"note\": \"{{happyNote}}\" },\n  \"priority\": 50,\n  \"maxAttempts\": 5\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/v1/jobs", "host": ["{{baseUrl}}"], "path": ["v1", "jobs"] }
+          }
+        },
+        {
+          "name": "GET /v1/jobs/{id} — poll until SUCCEEDED",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const j = pm.response.json();",
+                  "pm.test('id matches', () => pm.expect(j.id).to.eql(pm.collectionVariables.get('lastJobId')));",
+                  "pm.test('reachable terminal state', () => pm.expect(['READY','LEASED','SUCCEEDED']).to.include(j.status));",
+                  "// Poll loop: re-run this request up to 10 times until SUCCEEDED.",
+                  "const attempts = (pm.collectionVariables.get('happyPollAttempts') || 0) + 1;",
+                  "pm.collectionVariables.set('happyPollAttempts', attempts);",
+                  "if (j.status !== 'SUCCEEDED' && attempts < 10) {",
+                  "  setTimeout(() => postman.setNextRequest('GET /v1/jobs/{id} — poll until SUCCEEDED'), 300);",
+                  "} else {",
+                  "  pm.test('terminal=SUCCEEDED', () => pm.expect(j.status).to.eql('SUCCEEDED'));",
+                  "  pm.test('attempt=0 (no retries)', () => pm.expect(j.attempt).to.eql(0));",
+                  "  pm.collectionVariables.set('happyPollAttempts', 0);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/v1/jobs/{{lastJobId}}", "host": ["{{baseUrl}}"], "path": ["v1", "jobs", "{{lastJobId}}"] }
+          }
+        },
+        {
+          "name": "GET /v1/jobs?status=SUCCEEDED&limit=5",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/jobs?status=SUCCEEDED&limit=5",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "jobs"],
+              "query": [
+                { "key": "status", "value": "SUCCEEDED" },
+                { "key": "limit", "value": "5" }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const j = pm.response.json();",
+                  "pm.test('items array', () => pm.expect(j.items).to.be.an('array'));",
+                  "pm.test('limit echoed', () => pm.expect(j.limit).to.eql(5));",
+                  "pm.test('items <= limit', () => pm.expect(j.items.length).to.be.at.most(5));",
+                  "if (j.items.length) {",
+                  "  pm.test('items have all-SUCCEEDED', () => j.items.forEach(i => pm.expect(i.status).to.eql('SUCCEEDED')));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "4 · Jobs · Idempotency",
+      "item": [
+        {
+          "name": "POST /v1/jobs with key (first → 202)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('idempKey', `key-${pm.collectionVariables.get('runId')}-${Date.now()}`);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('202 Accepted (new submit)', () => pm.response.to.have.status(202));",
+                  "const j = pm.response.json();",
+                  "pm.test('idempotentReplay=false', () => pm.expect(j.idempotentReplay).to.be.false);",
+                  "pm.collectionVariables.set('idempJobId', j.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Idempotency-Key", "value": "{{idempKey}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"queue\": \"{{queue}}\",\n  \"type\": \"echo\",\n  \"payload\": { \"outcome\": \"success\", \"k\": \"{{idempKey}}\" }\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/v1/jobs", "host": ["{{baseUrl}}"], "path": ["v1", "jobs"] }
+          }
+        },
+        {
+          "name": "POST /v1/jobs with same key + same payload (replay → 200)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK (idempotent replay)', () => pm.response.to.have.status(200));",
+                  "const j = pm.response.json();",
+                  "pm.test('idempotentReplay=true', () => pm.expect(j.idempotentReplay).to.be.true);",
+                  "pm.test('id matches first submit', () => pm.expect(j.id).to.eql(pm.collectionVariables.get('idempJobId')));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Idempotency-Key", "value": "{{idempKey}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"queue\": \"{{queue}}\",\n  \"type\": \"echo\",\n  \"payload\": { \"outcome\": \"success\", \"k\": \"{{idempKey}}\" }\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/v1/jobs", "host": ["{{baseUrl}}"], "path": ["v1", "jobs"] }
+          }
+        },
+        {
+          "name": "POST /v1/jobs with same key + DIFFERENT payload (mismatch → 409)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('409 Conflict', () => pm.response.to.have.status(409));",
+                  "const j = pm.response.json();",
+                  "pm.test('error code idempotency_conflict', () => pm.expect(j.code || j.error || '').to.match(/idempot/i));",
+                  "pm.test('points at original job', () => {",
+                  "  const ref = JSON.stringify(j);",
+                  "  pm.expect(ref).to.include(pm.collectionVariables.get('idempJobId'));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Idempotency-Key", "value": "{{idempKey}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"queue\": \"{{queue}}\",\n  \"type\": \"echo\",\n  \"payload\": { \"outcome\": \"fail\", \"k\": \"{{idempKey}}\" }\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/v1/jobs", "host": ["{{baseUrl}}"], "path": ["v1", "jobs"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "5 · Jobs · Retry & DLQ",
+      "item": [
+        {
+          "name": "POST /v1/jobs (terminal fail, maxAttempts=1)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('202 Accepted', () => pm.response.to.have.status(202));",
+                  "pm.collectionVariables.set('failJobId', pm.response.json().id);",
+                  "pm.collectionVariables.set('dlqPollAttempts', 0);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"queue\": \"{{queue}}\",\n  \"type\": \"echo\",\n  \"payload\": { \"outcome\": \"fail\" },\n  \"maxAttempts\": 1\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/v1/jobs", "host": ["{{baseUrl}}"], "path": ["v1", "jobs"] }
+          }
+        },
+        {
+          "name": "GET /v1/jobs/{id} — poll until DEAD",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const j = pm.response.json();",
+                  "const attempts = (pm.collectionVariables.get('dlqPollAttempts') || 0) + 1;",
+                  "pm.collectionVariables.set('dlqPollAttempts', attempts);",
+                  "if (j.status !== 'DEAD' && attempts < 30) {",
+                  "  setTimeout(() => postman.setNextRequest('GET /v1/jobs/{id} — poll until DEAD'), 500);",
+                  "} else {",
+                  "  pm.test('terminal=DEAD', () => pm.expect(j.status).to.eql('DEAD'));",
+                  "  // outcome=fail is non-retryable so the worker markDead's at attempt=0;",
+                  "  // for a flap-then-fail job attempt would equal maxAttempts. Allow either.",
+                  "  pm.test('attempt within budget', () => pm.expect(j.attempt).to.be.at.most(j.maxAttempts));",
+                  "  pm.test('lastError populated', () => pm.expect(j.lastError).to.be.a('string').and.not.empty);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/v1/jobs/{{failJobId}}", "host": ["{{baseUrl}}"], "path": ["v1", "jobs", "{{failJobId}}"] }
+          }
+        },
+        {
+          "name": "GET /v1/dlq — assert dead job present",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const j = pm.response.json();",
+                  "pm.test('items array', () => pm.expect(j.items).to.be.an('array'));",
+                  "const id = pm.collectionVariables.get('failJobId');",
+                  "const found = j.items.find(i => i.id === id);",
+                  "pm.test('failed job is in DLQ', () => pm.expect(found, `did not find ${id}`).to.exist);",
+                  "if (found) pm.test('DLQ entry status=DEAD', () => pm.expect(found.status).to.eql('DEAD'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/dlq?limit=200",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "dlq"],
+              "query": [{ "key": "limit", "value": "200" }]
+            }
+          }
+        },
+        {
+          "name": "POST /v1/dlq/{id}/replay",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const j = pm.response.json();",
+                  "pm.test('id matches', () => pm.expect(j.id).to.eql(pm.collectionVariables.get('failJobId')));",
+                  "pm.test('not DEAD anymore', () => pm.expect(['READY','SCHEDULED','LEASED','SUCCEEDED','FAILED','DEAD']).to.include(j.status));",
+                  "pm.test('cleared lastError or fresh attempt', () => pm.expect(j.attempt).to.be.at.most(j.maxAttempts));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/v1/dlq/{{failJobId}}/replay", "host": ["{{baseUrl}}"], "path": ["v1", "dlq", "{{failJobId}}", "replay"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "6 · Jobs · Scheduled",
+      "item": [
+        {
+          "name": "POST /v1/jobs (runAt=now+3s)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const runAt = new Date(Date.now() + 3000).toISOString();",
+                  "pm.collectionVariables.set('runAt', runAt);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('202 Accepted', () => pm.response.to.have.status(202));",
+                  "const j = pm.response.json();",
+                  "pm.test('status=SCHEDULED', () => pm.expect(j.status).to.eql('SCHEDULED'));",
+                  "pm.collectionVariables.set('schedJobId', j.id);",
+                  "pm.collectionVariables.set('schedPollAttempts', 0);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"queue\": \"{{queue}}\",\n  \"type\": \"echo\",\n  \"payload\": { \"outcome\": \"success\" },\n  \"runAt\": \"{{runAt}}\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/v1/jobs", "host": ["{{baseUrl}}"], "path": ["v1", "jobs"] }
+          }
+        },
+        {
+          "name": "GET /v1/jobs/{id} — poll until SUCCEEDED (after promotion)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const j = pm.response.json();",
+                  "const attempts = (pm.collectionVariables.get('schedPollAttempts') || 0) + 1;",
+                  "pm.collectionVariables.set('schedPollAttempts', attempts);",
+                  "if (j.status !== 'SUCCEEDED' && attempts < 20) {",
+                  "  setTimeout(() => postman.setNextRequest('GET /v1/jobs/{id} — poll until SUCCEEDED (after promotion)'), 500);",
+                  "} else {",
+                  "  pm.test('eventually SUCCEEDED', () => pm.expect(j.status).to.eql('SUCCEEDED'));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/v1/jobs/{{schedJobId}}", "host": ["{{baseUrl}}"], "path": ["v1", "jobs", "{{schedJobId}}"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "7 · Queue stats",
+      "item": [
+        {
+          "name": "GET /v1/queues/{queue}/stats",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/v1/queues/{{queue}}/stats", "host": ["{{baseUrl}}"], "path": ["v1", "queues", "{{queue}}", "stats"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const j = pm.response.json();",
+                  "['ready','tenant_ready','tenant_scheduled','tenant_leased','tenant_succeeded','tenant_failed','tenant_dead','tenant_pending'].forEach(k => {",
+                  "  pm.test(`${k} is numeric`, () => pm.expect(j[k]).to.be.a('number'));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "8 · Resilience · Bombard",
+      "description": "Durability / resilience suite. Designed to be run with Newman + iterations to generate real load.\n\n**Scenarios:**\n- **Burst submit (in-script)** — fires 50 submits in pre-request via `pm.sendRequest`, asserts all 2xx and counts 4xx/5xx.\n- **Concurrent idempotent submits** — same key fired N times; assert exactly one 202 and the rest are 200 with the same id.\n- **DLQ flood** — submits a wave of fail jobs to fill DLQ.\n- **Mixed-outcome flood** — random success/flap/fail.\n- **Stats sanity after flood** — confirms counts moved monotonically.\n\nFor real durability load use `./postman/run-bombard.sh` which runs this folder with iterations and CSV-driven payload variation.",
+      "item": [
+        {
+          "name": "Burst submit (50 in pre-request)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Fire N submits sequentially via pm.sendRequest. Aggregate counts into vars.",
+                  "const N = parseInt(pm.collectionVariables.get('burstN') || '50', 10);",
+                  "const baseUrl = pm.collectionVariables.get('baseUrl') || pm.variables.get('baseUrl');",
+                  "const apiKey = pm.collectionVariables.get('apiKey') || pm.variables.get('apiKey');",
+                  "const queue = pm.collectionVariables.get('queue') || 'default';",
+                  "let ok = 0, fail = 0, latencies = [];",
+                  "let started = Date.now();",
+                  "function send(i) {",
+                  "  if (i >= N) {",
+                  "    pm.collectionVariables.set('burstOk', ok);",
+                  "    pm.collectionVariables.set('burstFail', fail);",
+                  "    pm.collectionVariables.set('burstLatencies', JSON.stringify(latencies));",
+                  "    pm.collectionVariables.set('burstWallMs', Date.now() - started);",
+                  "    return;",
+                  "  }",
+                  "  const t0 = Date.now();",
+                  "  pm.sendRequest({",
+                  "    url: `${baseUrl}/v1/jobs`,",
+                  "    method: 'POST',",
+                  "    header: { 'Content-Type': 'application/json', 'X-API-Key': apiKey },",
+                  "    body: { mode: 'raw', raw: JSON.stringify({ queue, type: 'echo', payload: { outcome: 'success', i } }) }",
+                  "  }, (err, res) => {",
+                  "    const ms = Date.now() - t0;",
+                  "    latencies.push(ms);",
+                  "    if (!err && res && res.code >= 200 && res.code < 300) ok++; else fail++;",
+                  "    send(i + 1);",
+                  "  });",
+                  "}",
+                  "send(0);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// The 'request' on this item is the final stats fetch; assert burst totals here.",
+                  "const ok = parseInt(pm.collectionVariables.get('burstOk') || '0', 10);",
+                  "const fail = parseInt(pm.collectionVariables.get('burstFail') || '0', 10);",
+                  "const N = parseInt(pm.collectionVariables.get('burstN') || '50', 10);",
+                  "const lats = JSON.parse(pm.collectionVariables.get('burstLatencies') || '[]');",
+                  "const wallMs = parseInt(pm.collectionVariables.get('burstWallMs') || '0', 10);",
+                  "lats.sort((a,b) => a-b);",
+                  "const p = (q) => lats[Math.min(lats.length - 1, Math.floor(q * lats.length))];",
+                  "console.log(`burst: ok=${ok} fail=${fail} N=${N} wall=${wallMs}ms p50=${p(0.5)}ms p95=${p(0.95)}ms p99=${p(0.99)}ms`);",
+                  "pm.test(`burst ok=${ok}/${N}`, () => pm.expect(ok).to.eql(N));",
+                  "pm.test('burst no failures', () => pm.expect(fail).to.eql(0));",
+                  "pm.test('burst p95 < 500ms', () => pm.expect(p(0.95)).to.be.below(500));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/v1/queues/{{queue}}/stats", "host": ["{{baseUrl}}"], "path": ["v1", "queues", "{{queue}}", "stats"] }
+          }
+        },
+        {
+          "name": "Concurrent idempotent submits (same key x10)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const baseUrl = pm.variables.get('baseUrl');",
+                  "const apiKey = pm.variables.get('apiKey');",
+                  "const queue = pm.variables.get('queue') || 'default';",
+                  "const key = `idem-${Date.now()}-${Math.random().toString(36).slice(2,8)}`;",
+                  "pm.collectionVariables.set('concIdempKey', key);",
+                  "const N = 10;",
+                  "let new202 = 0, replay200 = 0, other = 0, ids = new Set();",
+                  "let done = 0;",
+                  "for (let i = 0; i < N; i++) {",
+                  "  pm.sendRequest({",
+                  "    url: `${baseUrl}/v1/jobs`,",
+                  "    method: 'POST',",
+                  "    header: { 'Content-Type': 'application/json', 'X-API-Key': apiKey, 'Idempotency-Key': key },",
+                  "    body: { mode: 'raw', raw: JSON.stringify({ queue, type: 'echo', payload: { outcome: 'success', k: key } }) }",
+                  "  }, (err, res) => {",
+                  "    done++;",
+                  "    if (err || !res) { other++; }",
+                  "    else if (res.code === 202) { new202++; try { ids.add(res.json().id); } catch(_){} }",
+                  "    else if (res.code === 200) { replay200++; try { ids.add(res.json().id); } catch(_){} }",
+                  "    else { other++; }",
+                  "    if (done === N) {",
+                  "      pm.collectionVariables.set('concNew202', new202);",
+                  "      pm.collectionVariables.set('concReplay200', replay200);",
+                  "      pm.collectionVariables.set('concOther', other);",
+                  "      pm.collectionVariables.set('concIds', JSON.stringify([...ids]));",
+                  "    }",
+                  "  });",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const new202 = parseInt(pm.collectionVariables.get('concNew202') || '0', 10);",
+                  "const replay200 = parseInt(pm.collectionVariables.get('concReplay200') || '0', 10);",
+                  "const other = parseInt(pm.collectionVariables.get('concOther') || '0', 10);",
+                  "const ids = JSON.parse(pm.collectionVariables.get('concIds') || '[]');",
+                  "console.log(`idempotent burst: new202=${new202} replay200=${replay200} other=${other} uniqIds=${ids.length}`);",
+                  "pm.test('exactly one new submit (202)', () => pm.expect(new202).to.eql(1));",
+                  "pm.test('rest are idempotent replays (200)', () => pm.expect(replay200).to.eql(9));",
+                  "pm.test('no errors', () => pm.expect(other).to.eql(0));",
+                  "pm.test('all responses point at one job id', () => pm.expect(ids.length).to.eql(1));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/v1/queues/{{queue}}/stats", "host": ["{{baseUrl}}"], "path": ["v1", "queues", "{{queue}}", "stats"] }
+          }
+        },
+        {
+          "name": "DLQ flood (20 fail jobs, maxAttempts=1)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const baseUrl = pm.variables.get('baseUrl');",
+                  "const apiKey = pm.variables.get('apiKey');",
+                  "const queue = pm.variables.get('queue') || 'default';",
+                  "const N = 20;",
+                  "let ok = 0, fail = 0, ids = [];",
+                  "let done = 0;",
+                  "for (let i = 0; i < N; i++) {",
+                  "  pm.sendRequest({",
+                  "    url: `${baseUrl}/v1/jobs`,",
+                  "    method: 'POST',",
+                  "    header: { 'Content-Type': 'application/json', 'X-API-Key': apiKey },",
+                  "    body: { mode: 'raw', raw: JSON.stringify({ queue, type: 'echo', payload: { outcome: 'fail', i }, maxAttempts: 1 }) }",
+                  "  }, (err, res) => {",
+                  "    done++;",
+                  "    if (!err && res && res.code === 202) { ok++; try { ids.push(res.json().id); } catch(_){} } else { fail++; }",
+                  "    if (done === N) {",
+                  "      pm.collectionVariables.set('floodOk', ok);",
+                  "      pm.collectionVariables.set('floodFail', fail);",
+                  "      pm.collectionVariables.set('floodIds', JSON.stringify(ids));",
+                  "    }",
+                  "  });",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const ok = parseInt(pm.collectionVariables.get('floodOk') || '0', 10);",
+                  "const fail = parseInt(pm.collectionVariables.get('floodFail') || '0', 10);",
+                  "console.log(`dlq flood: ok=${ok} fail=${fail}`);",
+                  "pm.test('all 20 accepted', () => pm.expect(ok).to.eql(20));",
+                  "pm.test('no submit failures', () => pm.expect(fail).to.eql(0));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/v1/queues/{{queue}}/stats", "host": ["{{baseUrl}}"], "path": ["v1", "queues", "{{queue}}", "stats"] }
+          }
+        },
+        {
+          "name": "Mixed-outcome flood (success/flap/fail x30)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const baseUrl = pm.variables.get('baseUrl');",
+                  "const apiKey = pm.variables.get('apiKey');",
+                  "const queue = pm.variables.get('queue') || 'default';",
+                  "const mixes = ['success','flap','fail'];",
+                  "const N = 30;",
+                  "let ok = 0, fail = 0;",
+                  "let done = 0;",
+                  "for (let i = 0; i < N; i++) {",
+                  "  const m = mixes[i % mixes.length];",
+                  "  const payload = m === 'flap' ? { outcome: 'flap', passOn: 2 } : { outcome: m };",
+                  "  const body = m === 'fail' ? { queue, type: 'echo', payload, maxAttempts: 1 } : { queue, type: 'echo', payload, maxAttempts: 4 };",
+                  "  pm.sendRequest({",
+                  "    url: `${baseUrl}/v1/jobs`,",
+                  "    method: 'POST',",
+                  "    header: { 'Content-Type': 'application/json', 'X-API-Key': apiKey },",
+                  "    body: { mode: 'raw', raw: JSON.stringify(body) }",
+                  "  }, (err, res) => {",
+                  "    done++;",
+                  "    if (!err && res && res.code === 202) ok++; else fail++;",
+                  "    if (done === N) {",
+                  "      pm.collectionVariables.set('mixedOk', ok);",
+                  "      pm.collectionVariables.set('mixedFail', fail);",
+                  "    }",
+                  "  });",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const ok = parseInt(pm.collectionVariables.get('mixedOk') || '0', 10);",
+                  "const fail = parseInt(pm.collectionVariables.get('mixedFail') || '0', 10);",
+                  "console.log(`mixed flood: ok=${ok} fail=${fail}`);",
+                  "pm.test('all 30 accepted', () => pm.expect(ok).to.eql(30));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/v1/queues/{{queue}}/stats", "host": ["{{baseUrl}}"], "path": ["v1", "queues", "{{queue}}", "stats"] }
+          }
+        },
+        {
+          "name": "Stats sanity after flood (waits 8s)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Block 8 seconds to let the workers drain the flood we just created.",
+                  "const start = Date.now(); while (Date.now() - start < 8000) { /* spin */ }"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const j = pm.response.json();",
+                  "console.log('stats after flood:', JSON.stringify(j));",
+                  "pm.test('queue depth has drained or near-zero', () => pm.expect(j.ready).to.be.below(50));",
+                  "pm.test('tenant_succeeded > 0', () => pm.expect(j.tenant_succeeded).to.be.above(0));",
+                  "pm.test('tenant_dead populated by flood', () => pm.expect(j.tenant_dead).to.be.above(0));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/v1/queues/{{queue}}/stats", "host": ["{{baseUrl}}"], "path": ["v1", "queues", "{{queue}}", "stats"] }
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -28,6 +28,17 @@ public class JdbcTenantRepository implements TenantRepository {
     private static final String SELECT_BY_API_KEY =
             "SELECT * FROM tenants WHERE api_key_hash = :hash";
 
+    private static final String UPDATE_SQL =
+            """
+            UPDATE tenants
+               SET name = :name,
+                   rate_limit_rps = :rps,
+                   rate_limit_burst = :burst,
+                   max_concurrency = :concurrency,
+                   active = :active
+             WHERE id = :id
+            """;
+
     private final NamedParameterJdbcTemplate jdbc;
 
     public JdbcTenantRepository(final NamedParameterJdbcTemplate jdbc) {
@@ -57,6 +68,22 @@ public class JdbcTenantRepository implements TenantRepository {
     @Override
     public Optional<Tenant> findByApiKeyHash(final String apiKeyHash) {
         return queryOne(SELECT_BY_API_KEY, new MapSqlParameterSource("hash", apiKeyHash));
+    }
+
+    @Override
+    public Tenant update(final Tenant tenant) {
+        final var params = new MapSqlParameterSource()
+                .addValue("id", tenant.id().value())
+                .addValue("name", tenant.name())
+                .addValue("rps", tenant.rateLimitRps())
+                .addValue("burst", tenant.rateLimitBurst())
+                .addValue("concurrency", tenant.maxConcurrency())
+                .addValue("active", tenant.active());
+        final int n = jdbc.update(UPDATE_SQL, params);
+        if (n == 0) {
+            throw new IllegalStateException("Tenant not found: " + tenant.id().value());
+        }
+        return tenant;
     }
 
     private Optional<Tenant> queryOne(final String sql, final MapSqlParameterSource params) {

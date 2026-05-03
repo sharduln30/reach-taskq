@@ -35,8 +35,8 @@ public interface JobRepository {
     /** Mark scheduled retry. */
     boolean scheduleRetry(JobId id, Instant runAt, int newAttempt, String lastError);
 
-    /** Mark dead-lettered. */
-    boolean markDead(JobId id, String lastError);
+    /** Mark dead-lettered. The {@code finalAttempt} value is the attempt that exhausted retries. */
+    boolean markDead(JobId id, int finalAttempt, String lastError);
 
     /** Find jobs whose lease has expired so the reaper can republish them. */
     List<Job> findExpiredLeases(Instant now, int limit);

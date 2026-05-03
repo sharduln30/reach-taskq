@@ -1,7 +1,13 @@
 package com.merakilabs.taskq.api.ws;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.merakilabs.taskq.core.domain.JobId;
+import com.merakilabs.taskq.core.domain.JobStatus;
+import com.merakilabs.taskq.core.domain.QueueName;
+import com.merakilabs.taskq.core.domain.TenantId;
+import com.merakilabs.taskq.core.port.JobStatusBroadcaster;
 import java.io.IOException;
+import java.time.Instant;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -13,12 +19,14 @@ import org.springframework.web.socket.WebSocketSession;
 
 /**
  * Tenant-scoped WebSocket broadcaster. Sessions register on connect with their tenant id; events
- * are fanned out only to sessions matching the event's tenant. The broadcaster is the single
- * point both the {@link com.merakilabs.taskq.api.ws.PostgresJobEventListener} and unit tests
- * push through, so we have a deterministic seam for end-to-end testing.
+ * are fanned out only to sessions matching the event's tenant.
+ *
+ * <p>Implements {@link JobStatusBroadcaster} so the worker / submission service can call us
+ * directly after each status transition (replaces the per-row {@code pg_notify} pipeline which
+ * serialized inserts on the per-database notification queue lock).
  */
 @Component
-public class JobEventBroadcaster {
+public class JobEventBroadcaster implements JobStatusBroadcaster {
 
     private static final Logger LOG = LoggerFactory.getLogger(JobEventBroadcaster.class);
 
@@ -59,6 +67,21 @@ public class JobEventBroadcaster {
         final TextMessage msg = new TextMessage(json);
         for (final WebSocketSession session : sessions) {
             sendQuietly(session, msg);
+        }
+    }
+
+    @Override
+    public void publish(
+            final JobId jobId,
+            final TenantId tenantId,
+            final QueueName queue,
+            final JobStatus status,
+            final int attempt) {
+        try {
+            publishStatusChange(new JobStatusEvent(
+                    jobId.value(), tenantId.value(), queue.value(), status.name(), attempt, Instant.now()));
+        } catch (final RuntimeException re) {
+            LOG.debug("WS broadcast failed (non-fatal)", re);
         }
     }
 

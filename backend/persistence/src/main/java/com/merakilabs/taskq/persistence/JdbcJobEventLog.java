@@ -8,6 +8,7 @@ import java.util.List;
 import java.util.UUID;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
+import org.springframework.jdbc.core.namedparam.SqlParameterSource;
 import org.springframework.stereotype.Repository;
 
 @Repository
@@ -36,7 +37,25 @@ public class JdbcJobEventLog implements JobEventLog {
 
     @Override
     public void append(final JobEvent event) {
-        final var params = new MapSqlParameterSource()
+        jdbc.update(INSERT_SQL, toParams(event));
+    }
+
+    @Override
+    public void appendAll(final List<JobEvent> events) {
+        if (events == null || events.isEmpty()) {
+            return;
+        }
+        if (events.size() == 1) {
+            append(events.get(0));
+            return;
+        }
+        final SqlParameterSource[] batch =
+                events.stream().map(JdbcJobEventLog::toParams).toArray(SqlParameterSource[]::new);
+        jdbc.batchUpdate(INSERT_SQL, batch);
+    }
+
+    private static MapSqlParameterSource toParams(final JobEvent event) {
+        return new MapSqlParameterSource()
                 .addValue("id", event.id())
                 .addValue("job_id", event.jobId().value())
                 .addValue("type", event.type().name())
@@ -44,7 +63,6 @@ public class JdbcJobEventLog implements JobEventLog {
                 .addValue("details", event.details())
                 .addValue("trace_id", event.traceId())
                 .addValue("occurred_at", Timestamp.from(event.occurredAt()));
-        jdbc.update(INSERT_SQL, params);
     }
 
     @Override

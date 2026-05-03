@@ -26,8 +26,7 @@ const useToastStore = create<ToastState>((set) => ({
     set((s) => ({ toasts: [...s.toasts, { ...t, id }] }));
     return id;
   },
-  dismiss: (id) =>
-    set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
+  dismiss: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
 }));
 
 export const toast = {
@@ -80,9 +79,7 @@ function ToastCard({ toast, onDismiss }: { toast: Toast; onDismiss: () => void }
     >
       <div className="font-medium">{toast.title}</div>
       {toast.description && (
-        <div className="text-xs text-muted-foreground mt-1 break-words">
-          {toast.description}
-        </div>
+        <div className="text-xs text-muted-foreground mt-1 break-words">{toast.description}</div>
       )}
     </div>
   );

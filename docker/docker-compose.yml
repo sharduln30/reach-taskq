@@ -24,6 +24,25 @@ services:
       - "max_connections=200"
       - "-c"
       - "shared_buffers=256MB"
+      - "-c"
+      - "shared_preload_libraries=pg_stat_statements"
+      - "-c"
+      - "pg_stat_statements.track=all"
+      - "-c"
+      - "pg_stat_statements.max=2000"
+      # Async group-commit: lets the WAL writer flush every wal_writer_delay (200ms by
+      # default) instead of fsync-per-commit. Tradeoff: a crash within the last 200ms
+      # may lose committed-but-not-flushed transactions. Acceptable for taskq because:
+      #  (1) submission uses outbox pattern + idempotency keys — replay is safe,
+      #  (2) worker uses at-least-once semantics — duplicates are caught by job_id
+      #      uniqueness on lease().
+      # Production deployments backed by real SSD/NVMe should consider keeping
+      # synchronous_commit=on; this knob is most impactful on overlay-FS / Colima where
+      # fsync latency is multi-ms.
+      - "-c"
+      - "synchronous_commit=off"
+      - "-c"
+      - "wal_writer_delay=10ms"
 
   redis:
     image: redis:7.2-alpine
@@ -67,6 +86,16 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-taskq_dev_pw}
       REDIS_HOST: redis
       REDIS_PORT: 6379
+      TASKQ_BROKER: ${TASKQ_BROKER:-redis}
+      TASKQ_WORKER_CONCURRENCY: ${TASKQ_WORKER_CONCURRENCY:-64}
+      TASKQ_LEASE_TTL_SECONDS: ${TASKQ_LEASE_TTL_SECONDS:-30}
+      TASKQ_DEV_SEED_API_KEY: ${TASKQ_DEV_SEED_API_KEY:-demo-api-key-do-not-use-in-prod}
+      TASKQ_HIKARI_MAX: ${TASKQ_HIKARI_MAX:-50}
+      TASKQ_HIKARI_MIN: ${TASKQ_HIKARI_MIN:-10}
+      TASKQ_TOMCAT_MAX_THREADS: ${TASKQ_TOMCAT_MAX_THREADS:-200}
+      TASKQ_TOMCAT_MAX_CONNECTIONS: ${TASKQ_TOMCAT_MAX_CONNECTIONS:-400}
+      TASKQ_TOMCAT_ACCEPT_COUNT: ${TASKQ_TOMCAT_ACCEPT_COUNT:-50}
+      TASKQ_LOG_LEVEL: ${TASKQ_LOG_LEVEL:-INFO}
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
       OTEL_SERVICE_NAME: reach-taskq
       OTEL_TRACES_SAMPLER: parentbased_traceidratio
@@ -97,6 +126,7 @@ services:
     restart: unless-stopped
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/rules:/etc/prometheus/rules:ro
       - prometheus-data:/prometheus
     ports:
       - "9090:9090"
@@ -135,6 +165,61 @@ services:
       - "4317:4317"
       - "4318:4318"
       - "8889:8889"
+
+  postgres-exporter:
+    # Exposes Postgres internals as Prometheus metrics — connection counts,
+    # transactions/sec, table bloat, deadlocks, replication lag, etc.
+    # Custom queries file adds pg_stat_statements top-N slow query metrics.
+    image: prometheuscommunity/postgres-exporter:v0.15.0
+    container_name: taskq-postgres-exporter
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATA_SOURCE_NAME: "postgresql://${POSTGRES_USER:-taskq}:${POSTGRES_PASSWORD:-taskq_dev_pw}@postgres:5432/${POSTGRES_DB:-taskq}?sslmode=disable"
+      PG_EXPORTER_EXTEND_QUERY_PATH: "/etc/postgres-exporter/queries.yml"
+    volumes:
+      - ./postgres-exporter/queries.yml:/etc/postgres-exporter/queries.yml:ro
+    ports:
+      - "9187:9187"
+
+  redis-exporter:
+    # Exposes Redis INFO + per-key/stream metrics — used memory, ops/sec,
+    # connected clients, AOF size, stream length & lag.
+    image: oliver006/redis_exporter:v1.62.0
+    container_name: taskq-redis-exporter
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      REDIS_ADDR: "redis://redis:6379"
+    command:
+      - "--include-system-metrics"
+      - "--check-streams=taskq:stream:default"
+    ports:
+      - "9121:9121"
+
+  node-exporter:
+    # Host-level CPU / memory / load / filesystem. On Docker Desktop / Colima
+    # this reflects the engine VM, not your macOS host — still useful for
+    # capacity planning of the dev box.
+    image: prom/node-exporter:v1.8.2
+    container_name: taskq-node-exporter
+    restart: unless-stopped
+    pid: host
+    ports:
+      - "9100:9100"
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - "--path.procfs=/host/proc"
+      - "--path.sysfs=/host/sys"
+      - "--path.rootfs=/rootfs"
+      - "--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)"
 
 volumes:
   postgres-data:

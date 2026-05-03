@@ -1,0 +1,60 @@
+{{- if .Values.autoscaling.enabled }}
+{{- if eq .Values.autoscaling.trigger.type "postgresql" }}
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+metadata:
+  name: {{ .Release.Name }}-keda-pg-auth
+  labels:
+    {{- include "taskq.labels" . | nindent 4 }}
+spec:
+  secretTargetRef:
+    - parameter: connection
+      name: {{ .Values.autoscaling.trigger.secretName }}
+      key: connection
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: {{ .Release.Name }}-worker
+  labels:
+    {{- include "taskq.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    name: {{ .Release.Name }}-worker
+    kind: Deployment
+  minReplicaCount: {{ .Values.autoscaling.minReplicas }}
+  maxReplicaCount: {{ .Values.autoscaling.maxReplicas }}
+  pollingInterval: {{ .Values.autoscaling.pollingInterval }}
+  cooldownPeriod: {{ .Values.autoscaling.cooldownPeriod }}
+  triggers:
+    - type: postgresql
+      metadata:
+        # Backlog of READY jobs across all tenants — the queue depth that workers must drain.
+        query: "SELECT count(*) FROM jobs WHERE status = 'READY'"
+        targetQueryValue: "{{ .Values.autoscaling.trigger.targetReadyJobs }}"
+      authenticationRef:
+        name: {{ .Release.Name }}-keda-pg-auth
+{{- else if eq .Values.autoscaling.trigger.type "redis-streams" }}
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: {{ .Release.Name }}-worker
+  labels:
+    {{- include "taskq.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    name: {{ .Release.Name }}-worker
+    kind: Deployment
+  minReplicaCount: {{ .Values.autoscaling.minReplicas }}
+  maxReplicaCount: {{ .Values.autoscaling.maxReplicas }}
+  pollingInterval: {{ .Values.autoscaling.pollingInterval }}
+  cooldownPeriod: {{ .Values.autoscaling.cooldownPeriod }}
+  triggers:
+    - type: redis-streams
+      metadata:
+        addressFromEnv: REDIS_HOST_PORT
+        stream: taskq:stream:default
+        consumerGroup: workers
+        pendingEntriesCount: "{{ .Values.autoscaling.trigger.targetReadyJobs }}"
+{{- end }}
+{{- end }}

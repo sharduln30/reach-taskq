@@ -7,6 +7,8 @@ import com.merakilabs.taskq.core.domain.LeaseToken;
 import com.merakilabs.taskq.core.port.JobEventLog;
 import com.merakilabs.taskq.core.port.JobRepository;
 import com.merakilabs.taskq.core.port.Outbox;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Instant;
 import java.util.UUID;
 import org.slf4j.Logger;
@@ -38,11 +40,23 @@ public class LeaseReaper {
     private final JobRepository jobs;
     private final Outbox outbox;
     private final JobEventLog events;
+    private final Counter deadCounter;
+    private final Counter reapedCounter;
 
-    public LeaseReaper(final JobRepository jobs, final Outbox outbox, final JobEventLog events) {
+    public LeaseReaper(
+            final JobRepository jobs,
+            final Outbox outbox,
+            final JobEventLog events,
+            final MeterRegistry meters) {
         this.jobs = jobs;
         this.outbox = outbox;
         this.events = events;
+        this.deadCounter = Counter.builder("taskq.jobs.dead")
+                .description("Jobs transitioned to DEAD (DLQ) since process start")
+                .register(meters);
+        this.reapedCounter = Counter.builder("taskq.lease.reaped")
+                .description("Lease rows reaped (worker crashed or stalled past lease TTL)")
+                .register(meters);
     }
 
     @Scheduled(fixedDelayString = "${taskq.worker.lease-reaper-interval-seconds:10}000")
@@ -61,7 +75,8 @@ public class LeaseReaper {
             }
             final int nextAttempt = j.attempt() + 1;
             if (nextAttempt >= j.maxAttempts()) {
-                jobs.markDead(j.id(), "lease expired and attempts exhausted");
+                jobs.markDead(j.id(), nextAttempt, "lease expired and attempts exhausted");
+                deadCounter.increment();
                 events.append(new JobEvent(
                         UUID.randomUUID(),
                         j.id(),
@@ -74,6 +89,7 @@ public class LeaseReaper {
             }
             final boolean reaped = jobs.reapExpired(j.id(), token);
             if (reaped) {
+                reapedCounter.increment();
                 outbox.enqueue(
                         Outbox.EventType.PUBLISH_READY,
                         j.queue(),

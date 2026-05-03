@@ -18,7 +18,11 @@ export async function mockApi(page: Page, stubs: Stubs = {}) {
     route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify({ name: "reach-taskq", version: "0.1.0", now: new Date().toISOString() }),
+      body: JSON.stringify({
+        name: "reach-taskq",
+        version: "0.1.0",
+        now: new Date().toISOString(),
+      }),
     }),
   );
 

@@ -28,22 +28,24 @@ export default function Overview() {
         </div>
       </div>
 
-      <section
-        aria-label="Queue stats"
-        className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-8"
-      >
+      <section aria-label="Queue stats" className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-8">
         <Stat label="Ready" value={stats?.tenant_ready} testId="stat-ready" tone="cyan" />
-        <Stat label="Scheduled" value={stats?.tenant_scheduled} testId="stat-scheduled" tone="blue" />
+        <Stat
+          label="Scheduled"
+          value={stats?.tenant_scheduled}
+          testId="stat-scheduled"
+          tone="blue"
+        />
         <Stat label="Leased" value={stats?.tenant_leased} testId="stat-leased" tone="amber" />
-        <Stat label="Succeeded" value={stats?.tenant_succeeded} testId="stat-succeeded" tone="emerald" />
+        <Stat
+          label="Succeeded"
+          value={stats?.tenant_succeeded}
+          testId="stat-succeeded"
+          tone="emerald"
+        />
         <Stat label="Failed" value={stats?.tenant_failed} testId="stat-failed" tone="orange" />
         <Stat label="Dead" value={stats?.tenant_dead} testId="stat-dead" tone="rose" />
-        <Stat
-          label="Pending"
-          value={stats?.tenant_pending}
-          testId="stat-pending"
-          tone="zinc"
-        />
+        <Stat label="Pending" value={stats?.tenant_pending} testId="stat-pending" tone="zinc" />
         <Stat label="Queue depth" value={stats?.ready} testId="stat-queue-depth" tone="violet" />
       </section>
 
@@ -60,7 +62,10 @@ export default function Overview() {
           )}
           <ul className="divide-y divide-border/50">
             {recent.slice(0, 30).map((e) => (
-              <li key={`${e.jobId}-${e.updatedAt}`} className="px-3 py-1.5 text-xs flex items-center gap-3">
+              <li
+                key={`${e.jobId}-${e.updatedAt}`}
+                className="px-3 py-1.5 text-xs flex items-center gap-3"
+              >
                 <span className="text-muted-foreground tabular-nums">
                   {new Date(e.updatedAt).toLocaleTimeString()}
                 </span>
@@ -104,14 +109,9 @@ function Stat({
   tone: keyof typeof TONES;
 }) {
   return (
-    <div
-      data-testid={testId}
-      className="rounded-lg border border-border bg-card/40 p-4"
-    >
+    <div data-testid={testId} className="rounded-lg border border-border bg-card/40 p-4">
       <div className="text-xs text-muted-foreground">{label}</div>
-      <div className={`text-2xl font-semibold tabular-nums ${TONES[tone]}`}>
-        {value ?? "—"}
-      </div>
+      <div className={`text-2xl font-semibold tabular-nums ${TONES[tone]}`}>{value ?? "—"}</div>
     </div>
   );
 }

@@ -19,6 +19,21 @@ public interface JobBroker {
     /** Publish a ready job onto the broker so workers can pick it up. */
     void publishReady(QueueName queue, JobId jobId, TenantId tenantId);
 
+    /**
+     * Publish a batch of ready jobs in a single round trip when the broker supports it
+     * (Redis pipelined XADD, RabbitMQ confirm batch, etc.). Default impl falls back to a
+     * loop so transports that don't benefit don't have to override.
+     */
+    default void publishReadyBatch(List<ReadyEntry> entries) {
+        for (ReadyEntry e : entries) {
+            publishReady(e.queue(), e.jobId(), e.tenantId());
+        }
+    }
+
+    /** Lightweight tuple for {@link #publishReadyBatch}. */
+    record ReadyEntry(QueueName queue, JobId jobId, TenantId tenantId) {}
+
+
     /** Pull up to {@code maxBatch} jobs for the given queue, blocking up to {@code blockFor}. */
     List<Delivery> pull(QueueName queue, String consumer, int maxBatch, Duration blockFor);
 

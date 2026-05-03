@@ -11,6 +11,7 @@ import com.merakilabs.taskq.core.domain.Tenant;
 import com.merakilabs.taskq.core.port.IdempotencyStore;
 import com.merakilabs.taskq.core.port.JobEventLog;
 import com.merakilabs.taskq.core.port.JobRepository;
+import com.merakilabs.taskq.core.port.JobStatusBroadcaster;
 import com.merakilabs.taskq.core.port.Outbox;
 import com.merakilabs.taskq.core.port.TenantRepository;
 import com.merakilabs.taskq.worker.config.TaskqProperties;
@@ -21,6 +22,9 @@ import java.util.Optional;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -52,6 +56,7 @@ public class JobSubmissionService {
     private final JobEventLog events;
     private final NamedParameterJdbcTemplate jdbc;
     private final TaskqProperties props;
+    private final JobStatusBroadcaster broadcaster;
 
     public JobSubmissionService(
             final TenantRepository tenants,
@@ -60,7 +65,8 @@ public class JobSubmissionService {
             final Outbox outbox,
             final JobEventLog events,
             final NamedParameterJdbcTemplate jdbc,
-            final TaskqProperties props) {
+            final TaskqProperties props,
+            final ObjectProvider<JobStatusBroadcaster> broadcasterProvider) {
         this.tenants = tenants;
         this.jobs = jobs;
         this.idempotency = idempotency;
@@ -68,10 +74,40 @@ public class JobSubmissionService {
         this.events = events;
         this.jdbc = jdbc;
         this.props = props;
+        this.broadcaster = broadcasterProvider.getIfAvailable(() -> JobStatusBroadcaster.NOOP);
+    }
+
+    /**
+     * Public entry point. Wraps {@link #submitInTx} so that a unique-violation race on
+     * {@code idempotency_keys (tenant_id, key)} (two concurrent submits with the same key) is
+     * caught and converted into an idempotent replay rather than bubbling out as HTTP 500.
+     */
+    public SubmitResult submit(final SubmitJobCommand cmd) {
+        try {
+            return submitInTx(cmd);
+        } catch (final DataIntegrityViolationException race) {
+            if (cmd.idempotencyKey().isEmpty()) {
+                throw race;
+            }
+            final String requestHash = IdempotencyHasher.hash(cmd);
+            final Optional<IdempotencyStore.Lookup> hit =
+                    idempotency.find(cmd.tenantId(), cmd.idempotencyKey().get(), requestHash);
+            if (hit.isEmpty()) {
+                throw race;
+            }
+            if (hit.get().hashMismatch()) {
+                return new SubmitResult.IdempotencyConflict(
+                        hit.get().jobId(),
+                        "Idempotency-Key reused with different payload (hash mismatch).");
+            }
+            return jobs.findById(hit.get().jobId())
+                    .<SubmitResult>map(SubmitResult.IdempotentReplay::new)
+                    .orElseThrow(() -> race);
+        }
     }
 
     @Transactional(propagation = Propagation.REQUIRED)
-    public SubmitResult submit(final SubmitJobCommand cmd) {
+    public SubmitResult submitInTx(final SubmitJobCommand cmd) {
         final Tenant tenant = tenants
                 .findById(cmd.tenantId())
                 .orElseThrow(() -> new IllegalStateException("Unknown tenant: " + cmd.tenantId()));
@@ -152,15 +188,17 @@ public class JobSubmissionService {
                 cmd.queue(),
                 cmd.type(),
                 status);
+        broadcaster.publish(job.id(), cmd.tenantId(), cmd.queue(), status, 0);
         return new SubmitResult.Created(job);
     }
 
     private void insertIdempotencyRow(final Job job, final String requestHash, final Instant now) {
         final Instant expiresAt = now.plus(Duration.ofHours(props.idempotency().ttlHours()));
-        jdbc.update(
+        final int rows = jdbc.update(
                 """
                 INSERT INTO idempotency_keys (tenant_id, key, job_id, request_hash, created_at, expires_at)
                 VALUES (:tenant, :key, :job, :hash, :now, :expires)
+                ON CONFLICT (tenant_id, key) DO NOTHING
                 """,
                 new MapSqlParameterSource()
                         .addValue("tenant", job.tenantId().value())
@@ -169,5 +207,12 @@ public class JobSubmissionService {
                         .addValue("hash", requestHash)
                         .addValue("now", Timestamp.from(now))
                         .addValue("expires", Timestamp.from(expiresAt)));
+        if (rows == 0) {
+            // Lost the race — the other transaction wrote the row first. Force the rest of the
+            // submit transaction to abort with a unique-violation so the outer submit() handler
+            // re-resolves the existing key (replay vs conflict) on the committed row.
+            throw new DuplicateKeyException(
+                    "idempotency_keys: duplicate (tenant_id,key) — concurrent submit raced");
+        }
     }
 }

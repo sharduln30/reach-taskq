@@ -7,8 +7,8 @@ test.describe("a11y @a11y", () => {
     test(`no serious / critical violations on ${route.path}`, async ({ page }) => {
       await page.goto(route.path);
       const results = await new AxeBuilder({ page })
-          .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
-          .analyze();
+        .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
+        .analyze();
       const blocking = results.violations.filter(
         (v) => v.impact === "critical" || v.impact === "serious",
       );

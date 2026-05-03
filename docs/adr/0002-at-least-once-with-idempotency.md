@@ -14,4 +14,4 @@ The assignment asks for "at-least-once or exactly-once with idempotency keys". T
 ## Consequences
 - Implementation is simpler and more reliable than chasing exactly-once.
 - Clients have a clear contract to write retry-safe submits.
-- We must document the request-hash mismatch behavior: if the same key is reused with a different payload hash, we return HTTP 422 (not silent overwrite).
+- We must document the request-hash mismatch behavior: if the same key is reused with a different payload hash, we return HTTP 409 (not silent overwrite).

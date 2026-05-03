@@ -11,9 +11,7 @@ import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
-import org.testcontainers.junit.jupiter.Testcontainers;
 
-@Testcontainers
 class JobsApiIntegrationTest extends AbstractIntegrationTest {
 
     @Test
@@ -32,8 +30,9 @@ class JobsApiIntegrationTest extends AbstractIntegrationTest {
         final String key = "idem-" + UUID.randomUUID();
         final String body =
                 "{\"queue\":\"default\",\"type\":\"echo\",\"payload\":{\"outcome\":\"success\"},\"priority\":50}";
-        final HttpEntity<String> entity = new HttpEntity<>(body, jsonHeaders());
-        entity.getHeaders().set("Idempotency-Key", key);
+        final HttpHeaders headers = jsonHeaders();
+        headers.set("Idempotency-Key", key);
+        final HttpEntity<String> entity = new HttpEntity<>(body, headers);
         final ResponseEntity<String> first =
                 rest.exchange("/v1/jobs", HttpMethod.POST, entity, String.class);
         assertThat(first.getStatusCode()).isEqualTo(HttpStatus.ACCEPTED);
@@ -49,17 +48,19 @@ class JobsApiIntegrationTest extends AbstractIntegrationTest {
     @Test
     void idempotencyConflictOnPayloadMismatch() throws Exception {
         final String key = "idem-conflict-" + UUID.randomUUID();
+        final HttpHeaders firstHeaders = jsonHeaders();
+        firstHeaders.set("Idempotency-Key", key);
         final HttpEntity<String> first = new HttpEntity<>(
-                "{\"queue\":\"default\",\"type\":\"echo\",\"payload\":{\"a\":1},\"priority\":50}", jsonHeaders());
-        first.getHeaders().set("Idempotency-Key", key);
+                "{\"queue\":\"default\",\"type\":\"echo\",\"payload\":{\"a\":1},\"priority\":50}", firstHeaders);
         assertThat(rest.exchange("/v1/jobs", HttpMethod.POST, first, String.class).getStatusCode())
                 .isEqualTo(HttpStatus.ACCEPTED);
+        final HttpHeaders secondHeaders = jsonHeaders();
+        secondHeaders.set("Idempotency-Key", key);
         final HttpEntity<String> second = new HttpEntity<>(
-                "{\"queue\":\"default\",\"type\":\"echo\",\"payload\":{\"a\":2},\"priority\":50}", jsonHeaders());
-        second.getHeaders().set("Idempotency-Key", key);
+                "{\"queue\":\"default\",\"type\":\"echo\",\"payload\":{\"a\":2},\"priority\":50}", secondHeaders);
         final ResponseEntity<String> res =
                 rest.exchange("/v1/jobs", HttpMethod.POST, second, String.class);
-        assertThat(res.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+        assertThat(res.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
     }
 
     @Test
@@ -101,7 +102,7 @@ class JobsApiIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void tenantsMe() {
+    void tenantsMe() throws Exception {
         final ResponseEntity<String> res =
                 rest.exchange("/v1/tenants/me", HttpMethod.GET, new HttpEntity<>(jsonHeaders()), String.class);
         assertThat(res.getStatusCode()).isEqualTo(HttpStatus.OK);

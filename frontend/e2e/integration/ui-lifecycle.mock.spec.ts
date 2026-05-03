@@ -1,10 +1,5 @@
 import { expect, test } from "@playwright/test";
-import {
-  MockBackend,
-  installMockWebSocket,
-  makeJob,
-  pushWsEvent,
-} from "../_helpers/mock-backend";
+import { MockBackend, installMockWebSocket, makeJob, pushWsEvent } from "../_helpers/mock-backend";
 
 test.describe("ui reflects mock api + ws @integration", () => {
   test.describe.configure({ mode: "serial" });
@@ -21,9 +16,7 @@ test.describe("ui reflects mock api + ws @integration", () => {
     await page.goto("/jobs/new");
     const respP = page.waitForResponse(
       (r) =>
-        r.url().includes("/api/v1/jobs") &&
-        r.request().method() === "POST" &&
-        r.status() === 202,
+        r.url().includes("/api/v1/jobs") && r.request().method() === "POST" && r.status() === 202,
     );
     await page.getByTestId("submit-button").click();
     const { id } = (await (await respP).json()) as { id: string };
@@ -56,9 +49,7 @@ test.describe("ui reflects mock api + ws @integration", () => {
     await page.goto("/jobs/new");
     const respP = page.waitForResponse(
       (r) =>
-        r.url().includes("/api/v1/jobs") &&
-        r.request().method() === "POST" &&
-        r.status() === 202,
+        r.url().includes("/api/v1/jobs") && r.request().method() === "POST" && r.status() === 202,
     );
     await page.getByTestId("submit-button").click();
     const { id } = (await (await respP).json()) as { id: string };
@@ -88,9 +79,7 @@ test.describe("ui reflects mock api + ws @integration", () => {
     await page.getByTestId("field-payload").fill('{"a":1}');
     const first = page.waitForResponse(
       (r) =>
-        r.url().includes("/api/v1/jobs") &&
-        r.request().method() === "POST" &&
-        r.status() === 202,
+        r.url().includes("/api/v1/jobs") && r.request().method() === "POST" && r.status() === 202,
     );
     await page.getByTestId("submit-button").click();
     await first;
