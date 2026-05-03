@@ -36,7 +36,7 @@ import org.slf4j.LoggerFactory;
  * <ul>
  *   <li>Per-queue stream: {@code taskq:stream:{queue}} (created lazily via {@code XADD MKSTREAM}).</li>
  *   <li>Single global consumer group: {@code workers} (created with {@code XGROUP CREATE MKSTREAM}).</li>
- *   <li>Workers pull with {@code XREADGROUP ... NOACK} — durability lives in Postgres
+ *   <li>Workers pull with {@code XREADGROUP ... NOACK}, durability lives in Postgres
  *       ({@code jobs.status='LEASED'} + lease reaper). Stream entries are not retained in the PEL.</li>
  * </ul>
  *
@@ -98,7 +98,7 @@ public class RedisJobBroker implements JobBroker {
                     XGroupCreateArgs.Builder.mkstream());
             LOG.info("Created Redis consumer group {} on {}", GROUP, stream(q));
         } catch (final RedisBusyException already) {
-            // group exists — fine
+            // group exists, fine
         } catch (final RuntimeException re) {
             LOG.warn("Failed to ensure group {} on {}: {}", GROUP, stream(q), re.getMessage());
         }
@@ -128,9 +128,7 @@ public class RedisJobBroker implements JobBroker {
         for (final QueueName q : distinctQueues) {
             ensureGroup(q);
         }
-        // Pipeline N XADD calls in one network round trip via Lettuce async.
-        // Auto-flush is on by default, so we only pay one socket flush per batch
-        // when we await all futures together at the end.
+        // Pipeline N XADD via Lettuce async (auto-flush) so we pay one socket flush per batch.
         final RedisAsyncCommands<String, String> async = connection.async();
         final List<RedisFuture<String>> futures = new ArrayList<>(entries.size());
         for (final ReadyEntry e : entries) {
@@ -189,9 +187,8 @@ public class RedisJobBroker implements JobBroker {
                 if (jobs.lease(jobId, token, leasedUntil)) {
                     out.add(new Delivery(m.getId(), jobId, tenantId));
                 } else {
-                    // contended (already LEASED, SUCCEEDED, or DEAD) — drop. Reaper handles
-                    // crashed workers by re-publishing through the outbox.
-                    LOG.debug("Skipping stream entry {} — job {} not in READY", m.getId(), jobId);
+                    // Already LEASED/SUCCEEDED/DEAD: drop. Reaper republishes via outbox if needed.
+                    LOG.debug("Skipping stream entry {}, job {} not in READY", m.getId(), jobId);
                 }
             } catch (final IllegalArgumentException bad) {
                 LOG.warn("Malformed stream entry {} on {}", m.getId(), stream(queue));
@@ -202,7 +199,7 @@ public class RedisJobBroker implements JobBroker {
 
     @Override
     public void ack(final QueueName queue, final String consumer, final Delivery delivery) {
-        // NOACK consumption — nothing to do. Durability is in Postgres.
+        // NOACK consumption, nothing to do. Durability is in Postgres.
     }
 
     @Override
@@ -213,8 +210,7 @@ public class RedisJobBroker implements JobBroker {
     @Override
     public void schedule(
             final QueueName queue, final JobId jobId, final TenantId tenantId, final Instant runAt) {
-        // SCHEDULED jobs sit in the Postgres jobs table; ScheduledJobPromoter promotes due rows
-        // to READY and enqueues a fresh PUBLISH_READY outbox event. Nothing for Redis to do.
+        // SCHEDULED jobs live in Postgres; ScheduledJobPromoter promotes them. No-op for Redis.
     }
 
     @Override
@@ -237,8 +233,7 @@ public class RedisJobBroker implements JobBroker {
 
     @Override
     public int moveDueScheduled(final QueueName queue, final int batchSize) {
-        // ScheduledJobPromoter handles SCHEDULED→READY using the durable jobs table. No Redis
-        // delay-queue needed.
+        // ScheduledJobPromoter handles SCHEDULED→READY from the jobs table; no Redis delay-queue.
         return 0;
     }
 

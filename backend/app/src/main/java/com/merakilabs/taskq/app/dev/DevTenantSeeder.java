@@ -17,7 +17,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 /**
  * Seeds a default tenant on startup so the dashboard / Playwright tests have something to talk to.
- * Idempotent — uses {@code findByApiKeyHash} as a presence check.
+ * Idempotent, uses {@code findByApiKeyHash} as a presence check.
  */
 @Component
 @ConditionalOnProperty(prefix = "taskq.dev", name = "seed-tenant", havingValue = "true", matchIfMissing = true)

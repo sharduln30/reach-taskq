@@ -23,7 +23,7 @@ public class JdbcOutbox implements Outbox {
 
     /**
      * SKIP-LOCKED: multiple relay workers may run concurrently; each takes a disjoint batch.
-     * The selected rows are not yet marked published — that happens after a successful publish.
+     * The selected rows are not yet marked published, that happens after a successful publish.
      */
     private static final String POLL_SQL =
             """

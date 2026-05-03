@@ -184,7 +184,7 @@ run_one() {
     --reporters cli,json \
     --reporter-json-export "${OUT_DIR}/run-${idx}.json" \
     > "${OUT_DIR}/run-${idx}.log" 2>&1
-  echo "[$(date +%H:%M:%S)] worker ${idx} done — log: ${OUT_DIR}/run-${idx}.log"
+  echo "[$(date +%H:%M:%S)] worker ${idx} done, log: ${OUT_DIR}/run-${idx}.log"
 }
 
 start_ts=$(date +%s)

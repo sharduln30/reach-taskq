@@ -4,7 +4,7 @@ export default function Workers() {
       <h1 className="text-2xl font-semibold mb-1">Workers</h1>
       <p className="text-sm text-muted-foreground mb-6">
         Workers are stateless. Each backend process embeds the worker runtime by default and leases
-        jobs from Postgres via SKIP-LOCKED. Scale horizontally — there is no leader.
+        jobs from Postgres via SKIP-LOCKED. Scale horizontally, there is no leader.
       </p>
       <div className="rounded-lg border border-border bg-card/40 p-5 max-w-3xl space-y-3 text-sm">
         <p>

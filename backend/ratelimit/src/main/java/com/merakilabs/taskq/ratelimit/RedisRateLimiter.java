@@ -19,11 +19,11 @@ import org.slf4j.LoggerFactory;
 
 /**
  * Per-tenant token-bucket rate limiter backed by Redis Lua. The hot path is
- * a single round trip ({@code EVALSHA}) — typically &lt;1ms.
+ * a single round trip ({@code EVALSHA}), typically &lt;1ms.
  *
  * <p>Failure mode: any Redis error (timeout, connection loss) is logged and
- * either fails open (allow, default — protects user latency) or fails closed
- * (deny, when {@code taskq.ratelimit.fail-open=false} — protects the backend).
+ * either fails open (allow, default, protects user latency) or fails closed
+ * (deny, when {@code taskq.ratelimit.fail-open=false}, protects the backend).
  */
 public final class RedisRateLimiter implements RateLimiter {
 

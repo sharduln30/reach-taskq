@@ -8,8 +8,8 @@ copy-pasteable curl equivalent).
 
 | File                                                           | Purpose                                      |
 | -------------------------------------------------------------- | -------------------------------------------- |
-| `reach-taskq.postman_collection.json`                          | Functional collection — endpoints, tests, durability bombard |
-| `reach-taskq-stress.postman_collection.json`                   | Stress collection — knob-driven per-metric load |
+| `reach-taskq.postman_collection.json`                          | Functional collection, endpoints, tests, durability bombard |
+| `reach-taskq-stress.postman_collection.json`                   | Stress collection, knob-driven per-metric load |
 | `reach-taskq.postman_environment.json`                         | Direct backend (`http://localhost:8080`)     |
 | `reach-taskq.postman_environment.frontend.json`                | Through nginx proxy (`http://localhost:3000/api`) |
 | `run-bombard.sh`                                               | Newman parallel/iteration runner (functional bombard) |
@@ -18,20 +18,20 @@ copy-pasteable curl equivalent).
 
 ## Folders inside the collection
 
-1. **Health** — `/actuator/health`, `/actuator/health/readiness`,
+1. **Health**, `/actuator/health`, `/actuator/health/readiness`,
    `/actuator/prometheus` (asserts metric series exist), `/v1/info`.
-2. **Tenant** — `/v1/tenants/me` (sets `tenantId` for later requests),
+2. **Tenant**, `/v1/tenants/me` (sets `tenantId` for later requests),
    plus a 401 negative test with a bad key.
-3. **Jobs · Happy path** — submit a success job, poll until `SUCCEEDED`
+3. **Jobs · Happy path**, submit a success job, poll until `SUCCEEDED`
    (with built-in retry via `setNextRequest`), list `?status=SUCCEEDED`.
-4. **Jobs · Idempotency** — first submit (202), replay same key+payload (200
+4. **Jobs · Idempotency**, first submit (202), replay same key+payload (200
    same id), key reused with different payload (409 mismatch).
-5. **Jobs · Retry & DLQ** — terminal-fail submit, poll until `DEAD`, find it
+5. **Jobs · Retry & DLQ**, terminal-fail submit, poll until `DEAD`, find it
    in `/v1/dlq`, replay it.
-6. **Jobs · Scheduled** — `runAt = now+3s`, watch the row promote
+6. **Jobs · Scheduled**, `runAt = now+3s`, watch the row promote
    `SCHEDULED → READY → SUCCEEDED`.
-7. **Queue stats** — `/v1/queues/default/stats` schema asserts.
-8. **Resilience · Bombard** — durability suite (see below).
+7. **Queue stats**, `/v1/queues/default/stats` schema asserts.
+8. **Resilience · Bombard**, durability suite (see below).
 
 Every request also has two collection-level tests applied automatically:
 `responseTime < 2000ms` and `code < 500`.
@@ -45,7 +45,7 @@ Every request also has two collection-level tests applied automatically:
 3. Pick the env in the top-right.
 4. Run folders 1 → 8 in order. Folder 3+ depends on `tenantId` set by Folder 2.
 
-### Newman (CLI) — single run
+### Newman (CLI), single run
 
 ```bash
 npm i -g newman      # one-time
@@ -54,7 +54,7 @@ newman run postman/reach-taskq.postman_collection.json \
   -e postman/reach-taskq.postman_environment.json
 ```
 
-### Newman — single folder
+### Newman, single folder
 
 ```bash
 newman run postman/reach-taskq.postman_collection.json \
@@ -67,30 +67,30 @@ newman run postman/reach-taskq.postman_collection.json \
 `./postman/run-bombard.sh` runs the **Resilience · Bombard** folder in
 parallel newman processes. Each pass exercises:
 
-- **Burst submit (50 in pre-request)** — 50 sequential `pm.sendRequest` calls
+- **Burst submit (50 in pre-request)**, 50 sequential `pm.sendRequest` calls
   inside one Postman request, asserts all 2xx and reports p50/p95/p99
   latency.
-- **Concurrent idempotent submits (same key x10)** — 10 parallel submits
+- **Concurrent idempotent submits (same key x10)**, 10 parallel submits
   with the same `Idempotency-Key`. Asserts exactly one 202 + nine 200s, all
   pointing at the same `id` (the contract from
   the at-least-once + idempotency contract).
-- **DLQ flood (20 fail jobs, maxAttempts=1)** — fills the DLQ, verifies all
+- **DLQ flood (20 fail jobs, maxAttempts=1)**, fills the DLQ, verifies all
   20 submits accepted.
-- **Mixed-outcome flood (success/flap/fail x30)** — exercises the full
+- **Mixed-outcome flood (success/flap/fail x30)**, exercises the full
   lifecycle: success, retry-with-jitter, terminal fail.
-- **Stats sanity (after 8s drain)** — asserts queue depth dropped, succeeded
+- **Stats sanity (after 8s drain)**, asserts queue depth dropped, succeeded
   count climbed, dead count grew.
 
 ### Profiles
 
 ```bash
-# default — 5 parallel × 20 iterations × ~120 submits ≈ 12,000 submits in ~1m
+# default, 5 parallel × 20 iterations × ~120 submits ≈ 12,000 submits in ~1m
 ./postman/run-bombard.sh
 
-# heavier — push throughput
+# heavier, push throughput
 ITERATIONS=50 PARALLEL=8 ./postman/run-bombard.sh
 
-# 5-minute soak — runs the matrix on a loop until elapsed
+# 5-minute soak, runs the matrix on a loop until elapsed
 DURATION_S=300 PARALLEL=4 ./postman/run-bombard.sh
 
 # go through nginx → app instead of hitting backend directly
@@ -231,7 +231,7 @@ curl -fsS -X POST "$API/v1/jobs" \
 curl -fsS -H "X-API-Key: $KEY" "$API/v1/queues/default/stats" | jq
 ```
 
-### Burst submit (50 in parallel) — pure curl
+### Burst submit (50 in parallel), pure curl
 
 ```bash
 for i in $(seq 1 50); do
@@ -242,7 +242,7 @@ for i in $(seq 1 50); do
 done; wait
 ```
 
-### Concurrent idempotent submits (same key) — pure curl
+### Concurrent idempotent submits (same key), pure curl
 
 ```bash
 K=race-$RANDOM
@@ -307,7 +307,7 @@ Folder **`0 · Run all (one-click orchestrator)`** is purpose-built for clicking
    `concurrencyN=32`, `iterationOps=200`, `failPct=50`). **Hit Save** in the
    Variables tab.
 3. Open folder `0 · Run all (one-click orchestrator)`.
-4. (Optional) Run **🔧 Show current config** first — its console output echoes
+4. (Optional) Run **🔧 Show current config** first, its console output echoes
    the live values the orchestrator will use.
 5. Click **Send** on **⚡ Run all stress scenarios (single click)**.
 
@@ -318,7 +318,7 @@ tab:
 
 ```
 ═══════════════════════════════════════════════════════════════════
-  REACH TASKQ — Run-All Stress Report
+  REACH TASKQ, Run-All Stress Report
 ═══════════════════════════════════════════════════════════════════
 Started   : 2026-04-30T22:24:35.357Z
 Finished  : 2026-04-30T22:25:00.593Z
@@ -348,34 +348,34 @@ Aggregate assertions automatically run after the report:
 
 - `0 unexpected 5xx`
 - `error rate < errorRateThreshold`
-- `aggregate p95 < aggregateP95Threshold` (default 4000ms — multi-shape)
+- `aggregate p95 < aggregateP95Threshold` (default 4000ms, multi-shape)
 - `JVM live threads < 500` (virtual-thread sanity)
 - `heap < 95%`
 - `hikari pending == 0`
 - `no critical alerts firing` (queries Prometheus :9090)
 
 To re-run after tweaking a knob: just edit the variable, **Save**, and click
-**Send** again — no restart, no CLI.
+**Send** again, no restart, no CLI.
 
 ### Folders (granular use)
 
-1. **Hammer · Submit (configurable mix)** — fires `iterationOps` POSTs at
+1. **Hammer · Submit (configurable mix)**, fires `iterationOps` POSTs at
    `concurrencyN` parallelism, asserts `5xx==0`, error-rate < threshold, p95 OK.
-2. **Hammer · Idempotency replay storm** — same key fired N×; expects exactly
+2. **Hammer · Idempotency replay storm**, same key fired N×; expects exactly
    `1×202` + `(N-1)×200`, all responses pointing at one job id. Also: same key,
    different payload N× → expects `N×409` (mismatch) with no 5xx.
-3. **Hammer · Read-heavy** — saturates `/v1/queues/.../stats` and
+3. **Hammer · Read-heavy**, saturates `/v1/queues/.../stats` and
    `/v1/jobs?status=…` (rotates filters).
-4. **Hammer · Get-by-id fan-out** — submits 1, then GETs `/v1/jobs/{id}` ×N.
-5. **Hammer · DLQ flood + replay storm** — fills the DLQ with terminal-fail
+4. **Hammer · Get-by-id fan-out**, submits 1, then GETs `/v1/jobs/{id}` ×N.
+5. **Hammer · DLQ flood + replay storm**, fills the DLQ with terminal-fail
    submits, waits 6 s, then concurrently replays every entry.
-6. **Hammer · Saturate (escalating concurrency)** — ramps `C` from
+6. **Hammer · Saturate (escalating concurrency)**, ramps `C` from
    `saturateStartConc` to `saturateMaxConc` in `saturateStep` steps; stops at
    the first level where `5xx>0` or `errRate > threshold`. The "knee" is logged
    in the test output.
-7. **Hammer · Payload size stress** — submits at 1, 16, 64, 256 KiB; tolerates
+7. **Hammer · Payload size stress**, submits at 1, 16, 64, 256 KiB; tolerates
    `413` over the configured limit, asserts no `5xx` at any size.
-8. **Verify · Metrics summary** — pulls `/actuator/prometheus`, asserts JVM
+8. **Verify · Metrics summary**, pulls `/actuator/prometheus`, asserts JVM
    thread count, heap %, Hikari pending == 0, and queries Prometheus
    `ALERTS{alertstate="firing"}` to fail if anything `severity=critical` is up.
 
@@ -388,7 +388,7 @@ To re-run after tweaking a knob: just edit the variable, **Save**, and click
 ./postman/run-stress.sh burst       # short, max conc, all-success
 ./postman/run-stress.sh soak        # DURATION_S=300 by default
 ./postman/run-stress.sh saturate    # ramps to find the knee
-./postman/run-stress.sh fail        # 80% fail traffic — fills DLQ fast
+./postman/run-stress.sh fail        # 80% fail traffic, fills DLQ fast
 ./postman/run-stress.sh idempotent  # 100% idempotent traffic, 90% dups
 ```
 
@@ -420,7 +420,7 @@ After every run the script prints:
 
 `docker/prometheus/rules/taskq-alerts.yml` ships **25 rules across 6 groups**
 covering availability, errors, latency, capacity, queue depth, and **resource
-utilisation (CPU + memory)** — every headline failure mode the stress
+utilisation (CPU + memory)**, every headline failure mode the stress
 collection deliberately provokes:
 
 | Group              | Rule                       | Triggers when                                                | Mapped stress test |
@@ -464,33 +464,33 @@ curl -s 'http://localhost:9090/api/v1/alerts' | jq '.data.alerts[] | {alertname:
 ```
 
 The Grafana dashboard now includes an **Active alerts (Prometheus)** panel +
-critical/warning counters at the bottom — driven by the same `ALERTS` series.
+critical/warning counters at the bottom, driven by the same `ALERTS` series.
 
 ## Pure-curl async bombard (no Postman / Newman)
 
-Sometimes you just want to fire raw HTTP from a terminal — no JS sandbox, no
+Sometimes you just want to fire raw HTTP from a terminal, no JS sandbox, no
 sequential iteration. `curl-bombard.sh` uses `xargs -P` to run many concurrent
 `curl` workers in parallel.
 
 ### Quickstart
 
 ```bash
-# default — 500 submits at 32 parallel workers
+# default, 500 submits at 32 parallel workers
 ./postman/curl-bombard.sh
 
-# heavy — 10k submits at 128 parallel
+# heavy, 10k submits at 128 parallel
 TOTAL=10000 CONCURRENCY=128 ./postman/curl-bombard.sh
 
-# time-bound — fire as much as possible for 60s at 64 parallel
+# time-bound, fire as much as possible for 60s at 64 parallel
 DURATION_S=60 CONCURRENCY=64 ./postman/curl-bombard.sh
 
 # mostly fail (fills DLQ + trips error alerts)
 SUCCESS=10 FLAP=10 FAIL=80 TOTAL=500 CONCURRENCY=64 ./postman/curl-bombard.sh
 
-# mostly idempotent — exercise the replay path
+# mostly idempotent, exercise the replay path
 IDEMPOTENT=80 IDEM_DUP=70 TOTAL=500 CONCURRENCY=32 ./postman/curl-bombard.sh
 
-# big payloads — exercise size limits
+# big payloads, exercise size limits
 PAYLOAD_KB=64 TOTAL=200 CONCURRENCY=20 ./postman/curl-bombard.sh
 
 # through nginx instead of direct backend
@@ -506,7 +506,7 @@ THROUGH_FRONTEND=1 TOTAL=500 ./postman/curl-bombard.sh
 | `DURATION_S`    | 0       | if >0, run for this many seconds instead of TOTAL |
 | `SUCCESS`       | 70      | mix %                                             |
 | `FLAP`          | 20      | mix % (retry-then-succeed)                        |
-| `FAIL`          | 10      | mix % (terminal — `maxAttempts=1`, lands in DLQ)  |
+| `FAIL`          | 10      | mix % (terminal, `maxAttempts=1`, lands in DLQ)  |
 | `IDEMPOTENT`    | 0       | % of submits with `Idempotency-Key`               |
 | `IDEM_DUP`      | 50      | of those, % that REUSE an existing key            |
 | `PAYLOAD_KB`    | 0       | extra payload padding KiB                         |
@@ -572,7 +572,7 @@ watch -n 2 'docker exec taskq-postgres psql -U taskq -d taskq -c "SELECT status,
 ### One-liner curl bombard (no script, copy-paste anywhere)
 
 ```bash
-# 500 async submits at parallelism 32 — single line, no script file needed
+# 500 async submits at parallelism 32, single line, no script file needed
 seq 1 500 | xargs -P 32 -I{} curl -sS -o /dev/null -w "%{http_code} %{time_total}\n" \
   -X POST http://localhost:8080/v1/jobs \
   -H "Content-Type: application/json" \
@@ -594,14 +594,13 @@ Add this to a GitHub Actions job to fail the build on any assertion regression:
       --reporter-junit-export newman.xml
 ```
 
-## Notes
+## Caveats
 
-- The collection uses `setNextRequest` to poll terminal status — works in
-  Newman and Postman GUI runner, **not** in the browser-based
+- The collection uses `setNextRequest` to poll terminal status. Works in
+  Newman and the Postman GUI runner, **not** in the browser-based
   one-off "Send" button.
-- The bombard suite intentionally uses `pm.sendRequest` inside pre-request
-  scripts because Postman doesn't have native parallel iteration. The Newman
-  `PARALLEL=N` shell loop handles real concurrency.
+- The bombard suite uses `pm.sendRequest` inside pre-request scripts because
+  Postman has no native parallel iteration. The Newman `PARALLEL=N` shell
+  loop handles real concurrency.
 - For sustained throughput beyond ~500 req/s you'll outgrow Postman's per-
-  request overhead — switch to k6 (see `load/baseline.js`) for the higher
-  ceilings.
+  request overhead. Switch to k6 (see `load/baseline.js`) for higher ceilings.

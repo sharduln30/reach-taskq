@@ -16,7 +16,7 @@ Tests are organised into four layers, each running on a different cadence and in
 * Testcontainers spins ephemeral Postgres + Redis.
 ```
 
-## Layer 1 — backend unit tests
+## Layer 1, backend unit tests
 
 Pure JUnit 5 + AssertJ. No Spring, no DB, no network. Each `core` and `ratelimit` test runs in <50ms.
 
@@ -24,7 +24,7 @@ Pure JUnit 5 + AssertJ. No Spring, no DB, no network. Each `core` and `ratelimit
 cd backend && mvn test -pl core
 ```
 
-## Layer 2 — backend integration tests (Testcontainers)
+## Layer 2, backend integration tests (Testcontainers)
 
 Spring slice tests + `@Testcontainers` for Postgres + Redis. Asserts repository SQL, broker semantics, lease/ack/retry, idempotency, full restart-recovery scenario.
 
@@ -34,7 +34,7 @@ cd backend && mvn verify
 
 Requires Docker on the host that runs the suite.
 
-### Layer 2b — full Spring Boot + Testcontainers integration
+### Layer 2b, full Spring Boot + Testcontainers integration
 
 `backend/app/src/test/java/com/merakilabs/taskq/app/integration/`
 
@@ -70,10 +70,10 @@ cd backend && mvn -B -pl core,ratelimit,app -am -Djacoco.skip=true test
 
 > The Postgres Testcontainer now uses the **singleton container pattern** in
 > `AbstractIntegrationTest` (started once per test JVM, `withReuse(true)`). Do
-> not re-add `@Testcontainers` to subclasses — it tears the shared container
+> not re-add `@Testcontainers` to subclasses, it tears the shared container
 > down between classes and produces "Connection is closed" failures.
 
-## Layer 3 — frontend Playwright (no BE)
+## Layer 3, frontend Playwright (no BE)
 
 Smoke, navigation, responsive, and accessibility checks against a Vite dev server.
 Flow tests under `frontend/e2e/flows/` use `page.route()` to stub the BE so user journeys
@@ -92,7 +92,7 @@ npm run test:e2e -- --grep @a11y         # one tag
 
 Tags in use: `@smoke`, `@nav`, `@responsive`, `@a11y`, `@flow`, `@integration`.
 
-### Layer 3b — UI reflects state (mocked BE + fake WebSocket)
+### Layer 3b, UI reflects state (mocked BE + fake WebSocket)
 
 `frontend/e2e/integration/ui-lifecycle.mock.spec.ts` (`@integration`)
 
@@ -100,7 +100,7 @@ Drives the **real** React app against an in-process `MockBackend`
 (`frontend/e2e/_helpers/mock-backend.ts`) plus a fake `WebSocket`
 implementation. Tests can call `pushWsEvent(page, frame)` or
 `backend.transition(jobId, status)` to simulate worker progress and assert
-that the dashboard updates correctly — without Docker or a real backend.
+that the dashboard updates correctly, without Docker or a real backend.
 
 Covered scenarios:
 
@@ -114,7 +114,7 @@ Covered scenarios:
 cd frontend && npx playwright test e2e/integration/ui-lifecycle.mock.spec.ts
 ```
 
-## Layer 4 — full-stack E2E (real BE + FE)
+## Layer 4, full-stack E2E (real BE + FE)
 
 End-to-end validation: dashboard talks to the real Spring Boot API, which writes to Postgres,
 publishes to Redis, leases through the worker, and surfaces lifecycle in the UI via
@@ -129,7 +129,7 @@ cd frontend && npm run test:e2e:full
 
 Tests live under `frontend/e2e/full/*.e2e.spec.ts`.
 
-## Layer 5 — full integrated test pass (release gate)
+## Layer 5, full integrated test pass (release gate)
 
 End-to-end shake-down across every layer above, plus stress + observability +
 UX. Outputs a single, reproducible report.
@@ -169,7 +169,7 @@ E2E_API_KEY=demo-api-key-do-not-use-in-prod npm run test:e2e:full
 ```
 
 Each run drops Surefire / Newman / curl-bombard / k6 / Playwright HTML
-artefacts under `tests/.runs/<timestamp>/` (gitignored — local only).
+artefacts under `tests/.runs/<timestamp>/` (gitignored, local only).
 
 ## CI
 
@@ -177,6 +177,6 @@ GitHub Actions matrix: backend unit + integration on push; FE Playwright (layer 
 FE full E2E (layer 4) on `main` + nightly. Trace + video artifacts uploaded on failure.
 
 The pipeline currently lives at
-[`.ci-workflows/test.yml`](../.ci-workflows/test.yml) — move it to
+[`.ci-workflows/test.yml`](../.ci-workflows/test.yml), move it to
 `.github/workflows/test.yml` (or push with a token that carries the `workflow`
 scope) before Actions will pick it up.

@@ -56,7 +56,7 @@ export default function Tenants() {
       <h1 className="text-2xl font-semibold mb-1">Tenant settings</h1>
       <p className="text-sm text-muted-foreground mb-6">
         Quotas and active status for the tenant authenticated by the current API key. Cache TTL on
-        the API-key filter is 30s — changes propagate within that window.
+        the API-key filter is 30s, changes propagate within that window.
       </p>
 
       {isLoading && <p className="text-sm text-muted-foreground">Loading…</p>}

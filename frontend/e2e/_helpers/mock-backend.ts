@@ -386,7 +386,7 @@ export class MockBackend {
   }
 }
 
-/** Cheap stable JSON hash — order-insensitive enough for our tests. */
+/** Cheap stable JSON hash, order-insensitive enough for our tests. */
 function stableHash(v: unknown): string {
   const s = JSON.stringify(v);
   let h = 5381;

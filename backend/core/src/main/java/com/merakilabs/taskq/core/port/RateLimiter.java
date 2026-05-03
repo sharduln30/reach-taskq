@@ -14,7 +14,7 @@ public interface RateLimiter {
     Decision tryAcquire(TenantId tenantId, int rps, int burst);
 
     /**
-     * Non-blocking variant that returns a future. Default impl wraps the synchronous call —
+     * Non-blocking variant that returns a future. Default impl wraps the synchronous call,
      * implementations backed by a true async client (Lettuce async) SHOULD override and avoid
      * holding the calling thread.
      */

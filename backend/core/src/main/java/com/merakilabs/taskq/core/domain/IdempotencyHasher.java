@@ -7,7 +7,7 @@ import java.util.HexFormat;
 
 /**
  * Stable SHA-256 of the submission's salient fields. The hash protects against the case where
- * a buggy client reuses an idempotency key with a *different* payload — we return 422 instead
+ * a buggy client reuses an idempotency key with a *different* payload, we return 422 instead
  * of silently accepting the new request.
  */
 public final class IdempotencyHasher {

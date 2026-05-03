@@ -75,7 +75,7 @@ public class DlqController {
     /**
      * Replay a DEAD job. Body is optional; provide
      * {@code {"payload": {...new payload...}}} to override the original payload
-     * (useful when the original payload itself caused the failure — e.g. a
+     * (useful when the original payload itself caused the failure, e.g. a
      * malformed request the consumer can now handle, or for live demos).
      */
     @PostMapping(value = "/{id}/replay", consumes = {MediaType.APPLICATION_JSON_VALUE, MediaType.ALL_VALUE})

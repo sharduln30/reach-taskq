@@ -29,7 +29,7 @@ spec:
   triggers:
     - type: postgresql
       metadata:
-        # Backlog of READY jobs across all tenants — the queue depth that workers must drain.
+        # Backlog of READY jobs across all tenants, the queue depth that workers must drain.
         query: "SELECT count(*) FROM jobs WHERE status = 'READY'"
         targetQueryValue: "{{ .Values.autoscaling.trigger.targetReadyJobs }}"
       authenticationRef:

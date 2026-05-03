@@ -27,7 +27,7 @@ import org.springframework.web.filter.OncePerRequestFilter;
  * thread parks on a tight ({@code redis-timeout-ms}) deadline. Under virtual threads this
  * is essentially free (no carrier-thread pin), so we keep the simple sync-looking control
  * flow without paying a thread-pin cost. On timeout / Redis error we fail open by default
- * (configurable via {@code taskq.ratelimit.fail-open}) — protects user latency at the
+ * (configurable via {@code taskq.ratelimit.fail-open}), protects user latency at the
  * cost of letting bursts through during Redis blips.
  */
 public class TenantRateLimitFilter extends OncePerRequestFilter {

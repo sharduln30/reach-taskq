@@ -3,7 +3,7 @@
 This file captures the **why** and the **decisions taken in chat** so any future
 LLM agent or human picking up the repo has the same operating picture.
 
-> Original prompt: Meraki Labs **Senior Java** take-home — design and build a
+> Original prompt: Meraki Labs **Senior Java** take-home, design and build a
 > **distributed task queue / job-processing platform**, demo-ready in ~2 days,
 > using **only OSS / free** tooling.
 
@@ -29,7 +29,7 @@ LLM agent or human picking up the repo has the same operating picture.
 ## 2. Architecture invariants (do not violate)
 
 1. **Submit is a single DB transaction.** `JobSubmissionService` writes the row in
-   `jobs` **and** an entry in `outbox` in one transaction — no dual-write.
+   `jobs` **and** an entry in `outbox` in one transaction, no dual-write.
 2. **Outbox relay** publishes to the broker (`PostgresJobBroker` today; Redis tomorrow).
    At-least-once is intentional; **idempotency keys** make it operationally
    equivalent to exactly-once. See `docs/adr/0002-at-least-once-with-idempotency.md`.
@@ -39,7 +39,7 @@ LLM agent or human picking up the repo has the same operating picture.
    `LeaseReaper` re-queues it with attempt+1.
 5. **Tenant isolation.** Every read goes through `TenantContext.currentTenant()`.
    Cross-tenant reads MUST return 404, never 403.
-6. **API contract is in `backend/api`** — controllers + DTOs. The frontend
+6. **API contract is in `backend/api`**, controllers + DTOs. The frontend
    `frontend/src/lib/api.ts` mirrors it, paths under `/api/...` proxied by Vite.
 
 ---
@@ -52,8 +52,8 @@ backend/
                     (JobBroker, JobRepository, JobEventLog, Outbox, TenantRepository, …)
   persistence/      JdbcJobRepository, JdbcOutbox, JdbcJobEventLog, RowMappers
                     + Flyway V1__baseline.sql
-  broker-postgres/  PostgresJobBroker (SKIP-LOCKED) — default broker today
-  broker-redis/     scaffolding only — Redis Streams adapter to be filled in
+  broker-postgres/  PostgresJobBroker (SKIP-LOCKED), default broker today
+  broker-redis/     scaffolding only, Redis Streams adapter to be filled in
   ratelimit/        token-bucket + concurrency semaphore (Lua)
   api/              JobsController, DlqController, QueueStatsController,
                     TenantsController, ApiKey filter, WebSocket config
@@ -93,14 +93,14 @@ scripts/            seed + demo helpers
 | `PayloadAndValidationIntegrationTest` | `@TestPropertySource(taskq.payload.max-bytes=64)` → 413; bad queue pattern → 400 |
 
 Common base: `AbstractIntegrationTest`
-- `@SpringBootTest(RANDOM_PORT)` on the abstract; the Postgres `Testcontainer` is started once per JVM in a `static` initializer with `withReuse(true)` (singleton container pattern). Concrete subclasses must NOT re-add `@Testcontainers` — that re-asserts ownership of the lifecycle and tears the shared container down between classes (causes `Connection is closed` mid-suite).
+- `@SpringBootTest(RANDOM_PORT)` on the abstract; the Postgres `Testcontainer` is started once per JVM in a `static` initializer with `withReuse(true)` (singleton container pattern). Concrete subclasses must NOT re-add `@Testcontainers`, that re-asserts ownership of the lifecycle and tears the shared container down between classes (causes `Connection is closed` mid-suite).
 - Static `PostgreSQLContainer` + `@DynamicPropertySource` overriding JDBC URL/user/pass, `taskq.broker=postgres`, fast outbox/scheduler intervals, long lease-reaper interval, tight retry backoff, dev tenant seed with fixed `API_KEY`.
 - Helpers: `jsonHeaders()`, `postSubmit`, `getJobRaw`, `drainUntilStatus(jobId, expected)`.
 
 ### Frontend mock-integration
 
 Files of interest:
-- `frontend/e2e/_helpers/mock-backend.ts` — `MockBackend` class + `installMockWebSocket(page)` + `pushWsEvent(page, frame)`.
+- `frontend/e2e/_helpers/mock-backend.ts`, `MockBackend` class + `installMockWebSocket(page)` + `pushWsEvent(page, frame)`.
   - Route matching uses **URL pathname predicates** (Playwright passes a `URL` to the matcher, not a `Route`).
   - DLQ replay route is registered **before** the generic DLQ route so POST replay isn’t swallowed.
   - Job item route is registered **before** the collection route so `GET /v1/jobs/{id}` isn’t handled by the `/v1/jobs` handler.
@@ -146,25 +146,25 @@ docker compose -f docker/docker-compose.yml up -d
 
 ## 6. Production wiring (now complete)
 
-- ✅ **`broker-redis`** — `RedisJobBroker` (Lettuce) with `XADD` / `XREADGROUP NOACK` /
+- ✅ **`broker-redis`**, `RedisJobBroker` (Lettuce) with `XADD` / `XREADGROUP NOACK` /
   consumer-group create-on-publish. Postgres remains the lease source-of-truth;
   Redis is pure transport. Wired via `RedisBrokerConfig` (`@ConditionalOnProperty
   taskq.broker=redis`). Switch via `TASKQ_BROKER=redis` (default in `.env.example`).
-- ✅ **k8s/helm/** — Helm chart with split api / worker Deployments,
+- ✅ **k8s/helm/**, Helm chart with split api / worker Deployments,
   Service, PDBs, Ingress (gated), KEDA `ScaledObject` (Postgres-query scaler by
   default; redis-streams scaler available via `autoscaling.trigger.type`).
-- ✅ **load/baseline.js** — k6 script: ramping stages, MIX env (success / fail / flap / mixed),
+- ✅ **load/baseline.js**, k6 script: ramping stages, MIX env (success / fail / flap / mixed),
   `submit_latency_ms` Trend with p95<250ms / p99<500ms thresholds, error counter <1%.
-- ✅ **docker/grafana/dashboards/taskq-overview.json** — provisioned dashboard
+- ✅ **docker/grafana/dashboards/taskq-overview.json**, provisioned dashboard
   (submit RPS, submit p95, JVM threads, heap, HTTP request/latency by URI,
   Hikari pool, 5xx rate).
-- ✅ **scripts/seed-tenants.sh** + **scripts/demo-traffic.sh** — operator-facing
+- ✅ **scripts/seed-tenants.sh** + **scripts/demo-traffic.sh**, operator-facing
   helpers referenced by the Quick Start.
 
 ### Production fixes baked in
-- Hikari `auto-commit: true` (was `false` — silently dropped non-transactional
+- Hikari `auto-commit: true` (was `false`, silently dropped non-transactional
   writes including `DevTenantSeeder.insert(tenant)`).
-- `JdbcJobRepository.COUNT_BY_STATUS` — `CAST(:tenant AS uuid)` /
+- `JdbcJobRepository.COUNT_BY_STATUS`, `CAST(:tenant AS uuid)` /
   `CAST(:queue AS varchar)` so nullable bind params don't trip
   `could not determine data type of parameter $4`.
 - `app.Dockerfile` build flag flipped to `-Dmaven.test.skip=true` (was
@@ -182,14 +182,14 @@ docker compose -f docker/docker-compose.yml up -d
   (smoke + nav + responsive + a11y + mock-integration).
 
 ### Still deliberately out-of-scope
-- Coralogix / Datadog wiring — keep zero-paid SLA.
+- Coralogix / Datadog wiring, keep zero-paid SLA.
 
 ---
 
 ## 7. Distribution model
 
 This is a horizontally-scalable single-binary service. Coordination always
-goes through Postgres or Redis — no in-process leader, no JVM-local queue, no
+goes through Postgres or Redis, no in-process leader, no JVM-local queue, no
 sticky shard. Concretely:
 
 - **Submit path.** API process commits `jobs` + `idempotency_keys` + `outbox`
@@ -208,7 +208,7 @@ sticky shard. Concretely:
 - **Concurrency semaphore.** Redis ZSET (Lua-backed) holds the in-flight
   set per tenant. TTL'd; the reaper prunes orphans.
 - **WS broadcast.** App-side `JobStatusBroadcaster` (was `pg_notify` until
-  V2 migration). Tenant-scoped. Best-effort — never blocks the worker.
+  V2 migration). Tenant-scoped. Best-effort, never blocks the worker.
 
 **Why this matters operationally.** You can run N app processes behind a
 load balancer with no extra config. They all share the same Postgres + Redis
@@ -226,7 +226,7 @@ shutdown drains in-flight jobs before SIGKILL.
   rate-limit fails open by default, workers stop pulling. On recovery the
   relay drains the backlog with one pipelined batch and we resume.
 - **At-least-once + idempotent handlers** is the contract. Handler authors
-  MUST treat retries as normal — the framework will redeliver on broker
+  MUST treat retries as normal, the framework will redeliver on broker
   failover, lease expiry, or relay crash. Use the job's
   `idempotency_key` (already validated on submit) or the job id as the
   natural dedup key inside your handler.
@@ -244,28 +244,28 @@ likely to ask about.
 
 1. **`pg_notify` trigger serialized every status change.** Every INSERT into
    `jobs` fired a `NOTIFY`, and Postgres serializes notifications on a
-   per-database queue lock — so 50 concurrent submits queue up on
+   per-database queue lock, so 50 concurrent submits queue up on
    `wait_event=Lock|object`. Removed the trigger in V2; status changes are
    now broadcast app-side via `JobStatusBroadcaster`.
 2. **HikariCP at 20 connections.** Hard cap during a burst, with the worker
    loop and the relay loop competing with the submit path. Bumped to 50
    (config-driven via `TASKQ_HIKARI_MAX`) and added leak detection.
 3. **`org.springframework.jdbc.core` at DEBUG.** Single biggest overhead in
-   the original profile — a sync log line per row. Demoted to WARN in
+   the original profile, a sync log line per row. Demoted to WARN in
    `application-local.yml`.
 4. **Synchronous WAL fsync on the dev VM.** Colima's overlay fs makes fsync
    slow enough that submit p95 was ~6s before any change. We set
    `synchronous_commit=off, wal_writer_delay=10ms` on the Postgres
    container. Acceptable because at-least-once + outbox replay guarantees
    the last 10ms of WAL can be regenerated. **Do not do this on a real
-   primary unless you understand the durability tradeoff** — for taskq it's
+   primary unless you understand the durability tradeoff**, for taskq it's
    fine because the broker side will replay anything that gets lost.
 5. **Per-row JDBC inserts inside the worker.** Every job logged
    `LEASED + (SUCCEEDED|RETRY_SCHEDULED)` as two separate INSERTs. Added
    `JobEventLog.appendAll(...)` (`JdbcTemplate.batchUpdate`); worker now
    accumulates events and flushes once.
 6. **Per-row `XADD` from the relay.** Replaced with
-   `JobBroker.publishReadyBatch(...)` — Lettuce async pipelines N XADDs in
+   `JobBroker.publishReadyBatch(...)`, Lettuce async pipelines N XADDs in
    one socket flush.
 7. **Synchronous Lettuce in the rate-limit filter.** Pinned a Tomcat thread
    for every Redis round trip. Switched to `tryAcquireAsync(...)` (Lettuce
@@ -279,7 +279,7 @@ likely to ask about.
    the editor's own next request reflects the new RPS / burst / concurrency
    immediately (no 30s wait).
 9. **Workers running behind a single Lettuce connection.** Lettuce
-   multiplexes commands on one connection — the wrong move under sustained
+   multiplexes commands on one connection, the wrong move under sustained
    load is to share it across every component. We *do* share, but every
    per-component path uses async + pipelining specifically so a slow caller
    never head-of-lines someone else.

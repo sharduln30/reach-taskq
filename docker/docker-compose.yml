@@ -33,8 +33,8 @@ services:
       # Async group-commit: lets the WAL writer flush every wal_writer_delay (200ms by
       # default) instead of fsync-per-commit. Tradeoff: a crash within the last 200ms
       # may lose committed-but-not-flushed transactions. Acceptable for taskq because:
-      #  (1) submission uses outbox pattern + idempotency keys — replay is safe,
-      #  (2) worker uses at-least-once semantics — duplicates are caught by job_id
+      #  (1) submission uses outbox pattern + idempotency keys, replay is safe,
+      #  (2) worker uses at-least-once semantics, duplicates are caught by job_id
       #      uniqueness on lease().
       # Production deployments backed by real SSD/NVMe should consider keeping
       # synchronous_commit=on; this knob is most impactful on overlay-FS / Colima where
@@ -167,7 +167,7 @@ services:
       - "8889:8889"
 
   postgres-exporter:
-    # Exposes Postgres internals as Prometheus metrics — connection counts,
+    # Exposes Postgres internals as Prometheus metrics, connection counts,
     # transactions/sec, table bloat, deadlocks, replication lag, etc.
     # Custom queries file adds pg_stat_statements top-N slow query metrics.
     image: prometheuscommunity/postgres-exporter:v0.15.0
@@ -185,7 +185,7 @@ services:
       - "9187:9187"
 
   redis-exporter:
-    # Exposes Redis INFO + per-key/stream metrics — used memory, ops/sec,
+    # Exposes Redis INFO + per-key/stream metrics, used memory, ops/sec,
     # connected clients, AOF size, stream length & lag.
     image: oliver006/redis_exporter:v1.62.0
     container_name: taskq-redis-exporter
@@ -203,7 +203,7 @@ services:
 
   node-exporter:
     # Host-level CPU / memory / load / filesystem. On Docker Desktop / Colima
-    # this reflects the engine VM, not your macOS host — still useful for
+    # this reflects the engine VM, not your macOS host, still useful for
     # capacity planning of the dev box.
     image: prom/node-exporter:v1.8.2
     container_name: taskq-node-exporter

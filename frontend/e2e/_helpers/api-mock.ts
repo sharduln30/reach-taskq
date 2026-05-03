@@ -2,7 +2,7 @@ import type { Page } from "@playwright/test";
 
 /**
  * Intercept the BE so flow tests can run without Docker / Postgres / Redis.
- * Keeps the contract close to the real OpenAPI spec — when the real BE lands,
+ * Keeps the contract close to the real OpenAPI spec, when the real BE lands,
  * only the URL changes; the test itself is unchanged.
  */
 export type Stubs = {

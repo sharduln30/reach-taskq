@@ -80,10 +80,8 @@ public class WorkerRuntime {
             Executors.newSingleThreadExecutor(Thread.ofVirtual().name("worker-lease-loop").factory());
     private final ExecutorService handlerExec =
             Executors.newThreadPerTaskExecutor(Thread.ofVirtual().name("worker-job-", 0).factory());
-    // Scheduler for per-job heartbeat ticks. A single-threaded platform scheduler is plenty
-    // because each tick is a short JDBC + Redis round trip (~ms), and we cap concurrent in-flight
-    // jobs upstream (Tomcat threads × broker batch). Virtual threads are not used here because
-    // ScheduledExecutorService requires a fixed-size pool to enforce cadence.
+    // Single-threaded platform scheduler for heartbeat ticks. Each tick is a short JDBC + Redis
+    // round trip; ScheduledExecutorService needs a fixed-size pool so we don't use virtual threads.
     private final ScheduledExecutorService heartbeatExec =
             Executors.newSingleThreadScheduledExecutor(r -> {
                 final Thread t = new Thread(r, "worker-heartbeat");
@@ -176,9 +174,7 @@ public class WorkerRuntime {
             LOG.warn("Delivery for missing job, dropping: {}", delivery.jobId());
             return;
         }
-        // Buffer events so we flush 1-2 inserts in a single batched round trip at the
-        // end of processOne instead of doing 2-3 sequential inserts (each a separate DB
-        // round trip). Saves ~2 round trips per job under load.
+        // Buffer events so processOne flushes them in one batched insert instead of 2-3 round trips.
         final List<JobEvent> pending = new ArrayList<>(2);
         pending.add(newEvent(job.id(), JobEvent.Type.LEASED, job.attempt(), null));
         broadcaster.publish(job.id(), job.tenantId(), job.queue(), JobStatus.LEASED, job.attempt());
@@ -186,8 +182,8 @@ public class WorkerRuntime {
         leaseAgeTimer.record(Duration.between(job.createdAt(), Instant.now()));
         final Timer.Sample sample = Timer.start(meters);
 
-        // Per-job heartbeat: refresh lease watermark + concurrency-slot TTL at lease-ttl/3
-        // cadence so a long-running handler does not get reaped or pruned. Cancelled in finally.
+        // Heartbeat: refresh lease + concurrency-slot TTL at lease-ttl/3 so long-running handlers
+        // don't get reaped or pruned. Cancelled in finally.
         final LeaseToken leaseToken = job.leaseTokenOpt().orElse(null);
         ScheduledFuture<?> heartbeat = null;
         if (leaseToken != null) {
@@ -212,10 +208,8 @@ public class WorkerRuntime {
                 return;
             }
 
-            // Per-tenant concurrency gate. If the tenant is already at its in-flight cap,
-            // yield the job back: clear our lease, requeue with a small delay so another
-            // worker (or this one later) can pick it up. We do NOT increment attempt —
-            // hitting the cap is not a job-level failure.
+            // If the tenant is at its in-flight cap, yield: clear lease, requeue with a small
+            // delay. Don't increment attempt; hitting the cap isn't a job failure.
             final String holderToken = leaseToken == null ? null : leaseToken.value();
             final Tenant tenant = tenantCache.find(job.tenantId()).orElse(null);
             if (concurrency != null && tenant != null && holderToken != null) {
@@ -259,7 +253,7 @@ public class WorkerRuntime {
         final Instant runAt = Instant.now().plusMillis(Math.max(yieldDelayMs, 10));
         final boolean reset = jobs.transition(job.id(), JobStatus.LEASED, JobStatus.READY, null);
         if (!reset) {
-            LOG.warn("Yield-back failed to reset job {} (race?) — relying on lease reaper", job.id());
+            LOG.warn("Yield-back failed to reset job {} (race?), relying on lease reaper", job.id());
             return;
         }
         outbox.enqueue(Outbox.EventType.PUBLISH_READY, job.queue(), job.id(), tenantId, runAt);
@@ -309,9 +303,8 @@ public class WorkerRuntime {
         final boolean ok = jobs.renewLease(id, token, newUntil);
         if (ok) {
             appendEvent(id, JobEvent.Type.HEARTBEAT, 0, null);
-            // Refresh the concurrency-slot TTL so a long-running job doesn't get pruned
-            // out of the semaphore. If refresh returns false the slot was already lost
-            // (Redis evicted us) — caller should treat that as a yield in the next tick.
+            // Refresh the concurrency-slot TTL. If refresh returns false the slot was already
+            // pruned by Redis; caller should yield on the next tick.
             if (concurrency != null) {
                 jobs.findById(id).ifPresent(j -> concurrency.refresh(j.tenantId(), token.value()));
             }

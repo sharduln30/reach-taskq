@@ -14,7 +14,7 @@ import com.merakilabs.taskq.core.domain.TenantId;
  * sessions without holding a Postgres backend.
  *
  * <p>Implementations MUST be non-blocking from the caller's perspective and
- * MUST never throw — broadcast failures are observability-only, not correctness.
+ * MUST never throw, broadcast failures are observability-only, not correctness.
  */
 public interface JobStatusBroadcaster {
 

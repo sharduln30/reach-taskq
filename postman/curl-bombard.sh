@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# True async curl bombard. No Postman, no Newman — just curl + xargs -P.
+# True async curl bombard. No Postman, no Newman, just curl + xargs -P.
 #
 # Usage:
 #   ./postman/curl-bombard.sh                           # defaults: 500 submits, 32 parallel
@@ -177,7 +177,7 @@ awk -F '\t' '{c[$4]++} END{for (k in c) printf "  %-8s %d\n", k, c[k]}' "${RESUL
 
 echo
 echo "latency (s):"
-# Portable percentiles: sort first, then index — works on BSD awk (macOS) and gawk.
+# Portable percentiles: sort first, then index, works on BSD awk (macOS) and gawk.
 awk -F '\t' '{print $2}' "${RESULTS}" | sort -n > "${OUT_DIR}/lat.sorted"
 awk 'BEGIN{n=0; s=0} {arr[++n]=$1+0; s+=$1} END{
   if (n==0) {print "  no samples"; exit}

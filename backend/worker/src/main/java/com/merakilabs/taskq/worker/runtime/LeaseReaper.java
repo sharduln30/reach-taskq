@@ -28,7 +28,7 @@ import org.springframework.transaction.annotation.Transactional;
  *   <li>if attempts already exhausted, mark DEAD instead of READY (avoid an extra useless retry)</li>
  * </ol>
  *
- * <p>The {@code attempt} increment here is intentional — a crashed worker that didn't ack still
+ * <p>The {@code attempt} increment here is intentional, a crashed worker that didn't ack still
  * counted against the budget. This is the standard at-least-once semantic.
  */
 @Component

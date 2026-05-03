@@ -12,6 +12,6 @@ Workers spend most of their time blocked on I/O (DB reads, Redis ops, downstream
 
 ## Consequences
 - We can run thousands of concurrent jobs per worker without thread-stack memory pressure.
-- Code stays synchronous and readable — no callback / reactive plumbing.
+- Code stays synchronous and readable, no callback / reactive plumbing.
 - Care needed: synchronized blocks pin virtual threads; we use `ReentrantLock` where contention exists.
 - JFR / observability: virtual threads do not show up in standard thread dumps; we use `jcmd Thread.dump_to_file -format=json` and OTel runtime metrics.

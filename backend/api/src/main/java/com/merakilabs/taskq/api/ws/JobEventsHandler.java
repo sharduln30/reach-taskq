@@ -49,7 +49,7 @@ public class JobEventsHandler extends TextWebSocketHandler {
 
     @Override
     protected void handleTextMessage(final WebSocketSession session, final TextMessage message) {
-        // The dashboard does not send messages — it only listens. We accept and ignore.
+        // The dashboard does not send messages, it only listens. We accept and ignore.
     }
 
     private Optional<Tenant> resolveTenant(final WebSocketSession session) {

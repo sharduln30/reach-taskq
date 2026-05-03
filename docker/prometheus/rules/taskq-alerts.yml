@@ -37,7 +37,7 @@ groups:
           description: "5xx rate {{ $value | printf \"%.2f\" }}/s on {{ $labels.uri }} for 2m. Check `docker logs taskq-app | grep ERROR`."
 
       - alert: AnyFiveXxBurst
-        # Any 5xx in the last minute — early-warning for the demo.
+        # Any 5xx in the last minute, early-warning for the demo.
         expr: sum(increase(http_server_requests_seconds_count{status=~"5..", uri!~"/actuator.*"}[1m])) > 5
         for: 1m
         labels:
@@ -122,7 +122,7 @@ groups:
           severity: critical
           component: jvm
         annotations:
-          summary: "JVM heap > 95% — OOM imminent"
+          summary: "JVM heap > 95%, OOM imminent"
           description: "Heap utilisation {{ $value | printf \"%.0f\" }}% sustained for 2m."
 
       - alert: ThreadCountAnomaly
@@ -214,7 +214,7 @@ groups:
           description: "Tune `maxclients` or investigate connection leak."
 
       - alert: RedisStreamBacklog
-        # Redis stream length growing — producers outpacing consumers.
+        # Redis stream length growing, producers outpacing consumers.
         expr: redis_stream_length > 1000
         for: 2m
         labels:
@@ -244,7 +244,7 @@ groups:
           component: host
         annotations:
           summary: "Host CPU > 85% for 5m"
-          description: "Host {{ $labels.instance }} idle headroom < 15% — entire box is hot."
+          description: "Host {{ $labels.instance }} idle headroom < 15%, entire box is hot."
 
       - alert: HostMemoryHigh
         expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) > 0.90
@@ -260,7 +260,7 @@ groups:
     interval: 30s
     rules:
       - alert: QueueDepthGrowing
-        # Submits outpacing workers — ready jobs not draining.
+        # Submits outpacing workers, ready jobs not draining.
         expr: rate(http_server_requests_seconds_count{uri="/v1/jobs", method="POST", status=~"2.."}[5m]) > 1
               and on() rate(http_server_requests_seconds_count{uri="/v1/jobs", method="POST", status=~"2.."}[5m])
                   > rate(http_server_requests_seconds_count{uri="/v1/jobs/{id}", method="GET"}[5m]) * 2
@@ -282,7 +282,7 @@ groups:
           component: api
         annotations:
           summary: "5xx with little traffic"
-          description: "Errors observed during a near-idle window — possibly a background task failing."
+          description: "Errors observed during a near-idle window, possibly a background task failing."
 
   - name: taskq.quota
     interval: 30s
@@ -365,7 +365,7 @@ groups:
           description: "{{ $value | printf \"%.3f\" }} dead jobs/s. Inspect /v1/dlq and `jobs.last_error` for the failing handler."
 
       - alert: ProcessingP95High
-        # End-to-end handler latency p95 > 5s sustained — likely DB or downstream slow.
+        # End-to-end handler latency p95 > 5s sustained, likely DB or downstream slow.
         expr: histogram_quantile(0.95, sum(rate(taskq_processing_duration_seconds_bucket[5m])) by (le)) > 5
         for: 10m
         labels:

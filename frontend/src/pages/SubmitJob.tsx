@@ -51,7 +51,7 @@ export default function SubmitJob() {
         } else if (err.status === 413) {
           toast.error("Payload too large", err.payload?.message ?? "");
         } else if (err.status === 429) {
-          toast.error("Rate limited", "Slow down — tenant rate limit exceeded.");
+          toast.error("Rate limited", "Slow down, tenant rate limit exceeded.");
         } else {
           toast.error(`HTTP ${err.status}`, err.payload?.message ?? err.message);
         }

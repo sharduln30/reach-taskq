@@ -65,8 +65,7 @@ class RedisRateLimiterTest {
         final RateLimiter rl = newLimiter(true);
         final TenantId t = new TenantId(UUID.randomUUID());
 
-        // rps=1, burst=10. Even at full speed the refill after 10 fast calls is well below 1 token,
-        // so the 11th call must fall under the threshold and be denied.
+        // rps=1, burst=10: refill after 10 fast calls is <1 token, so the 11th must be denied.
         for (int i = 0; i < 10; i++) {
             assertThat(rl.tryAcquire(t, 1, 10).allowed())
                     .as("call %d should be allowed within burst", i)
@@ -82,7 +81,7 @@ class RedisRateLimiterTest {
         final RateLimiter rl = newLimiter(true);
         final TenantId t = new TenantId(UUID.randomUUID());
 
-        // rps=2, burst=2 — drain the bucket then wait long enough to refill at least one token.
+        // rps=2, burst=2, drain the bucket then wait long enough to refill at least one token.
         assertThat(rl.tryAcquire(t, 2, 2).allowed()).isTrue();
         assertThat(rl.tryAcquire(t, 2, 2).allowed()).isTrue();
         assertThat(rl.tryAcquire(t, 2, 2).allowed()).isFalse();
@@ -117,16 +116,14 @@ class RedisRateLimiterTest {
         }
         latch.await(10, java.util.concurrent.TimeUnit.SECONDS);
         pool.shutdown();
-        // With rps=1, burst=50, in <1s of wall time we should see ~burst grants total
-        // across all threads (plus a token or two from refill). Definitely no more than burst+5.
+        // rps=1, burst=50: in <1s we should see ~burst grants total (+1-2 from refill), no more.
         assertThat(allowed.get()).isBetween(burst - 1, burst + 5);
     }
 
     @Test
     void failOpenWhenRedisRefuses() {
-        // Connect to localhost:1 — guaranteed to fail. Lettuce defers connection attempts
-        // until the first command, so the EVALSHA call inside tryAcquire is what blows up,
-        // exercising the catch (RedisException) -> fail-open branch.
+        // Connect to localhost:1 (guaranteed unreachable). Lettuce defers connect until the
+        // first command, so EVALSHA inside tryAcquire blows up and hits the fail-open branch.
         final RedisClient bad = RedisClient.create(RedisURI.builder()
                 .withHost("127.0.0.1")
                 .withPort(1)
@@ -138,8 +135,7 @@ class RedisRateLimiterTest {
             final var d = rl.tryAcquire(new TenantId(UUID.randomUUID()), 1, 1);
             assertThat(d.allowed()).as("fail-open should grant when Redis is unreachable").isTrue();
         } catch (final io.lettuce.core.RedisConnectionException expected) {
-            // Lettuce raised on connect() — fine, the contract still holds: connection
-            // errors don't bubble out of the limiter when invoked during a request.
+            // Lettuce raised on connect(): fine. Contract still holds, no leak from limiter.
         } finally {
             bad.shutdown();
         }

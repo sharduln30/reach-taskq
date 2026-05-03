@@ -19,7 +19,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * Postgres SKIP-LOCKED implementation of {@link JobBroker}. The "broker" here is a thin layer
- * over the {@code jobs} table — it does not own a separate transport, so {@code publishReady} is
+ * over the {@code jobs} table, it does not own a separate transport, so {@code publishReady} is
  * a no-op (the row is already in {@code READY} after submission). Pull is a SKIP-LOCKED scan that
  * atomically transitions the selected rows to {@code LEASED}.
  *
@@ -85,8 +85,7 @@ public class PostgresJobBroker implements JobBroker {
 
     @Override
     public void publishReady(final QueueName queue, final JobId jobId, final TenantId tenantId) {
-        // No-op for the Postgres broker: the job is already in READY state in the jobs table,
-        // which IS our queue. Workers find it via SKIP-LOCKED scan.
+        // No-op: jobs table IS the queue here; workers pick READY rows via SKIP-LOCKED.
     }
 
     @Override
@@ -132,9 +131,8 @@ public class PostgresJobBroker implements JobBroker {
 
     @Override
     public void ack(final QueueName queue, final String consumer, final Delivery delivery) {
-        // ack is implicit via the JobRepository.transition(LEASED -> SUCCEEDED/...) the worker
-        // performs after handler success. We only need to clear the lease token so a stale renew
-        // cannot be applied.
+        // ack is implicit in JobRepository.transition(LEASED -> SUCCEEDED/...).
+        // Just null the lease token so a stale renew can't apply.
         clearLeaseToken(delivery.jobId());
     }
 
@@ -144,15 +142,14 @@ public class PostgresJobBroker implements JobBroker {
     }
 
     private void clearLeaseToken(final JobId jobId) {
-        // We do not know the token here — the worker has it. The repo's transition() / scheduleRetry
-        // / markDead methods already null these out, so this is just defence-in-depth.
+        // Worker holds the token; repo already nulls lease columns in transition/retry/markDead.
+        // Kept as defence-in-depth.
     }
 
     @Override
     public void schedule(
             final QueueName queue, final JobId jobId, final TenantId tenantId, final Instant runAt) {
-        // No-op: the row was already inserted with status=SCHEDULED + scheduled_at=runAt.
-        // ScheduledJobPromoter promotes due rows to READY.
+        // No-op: row already in SCHEDULED+scheduled_at; ScheduledJobPromoter promotes it.
     }
 
     @Override

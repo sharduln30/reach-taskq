@@ -13,7 +13,7 @@
 - Action: verify connectivity + restart app pods. Workers with leased jobs will heartbeat-fail; the reaper will republish on recovery.
 
 ### Redis unreachable
-- Symptom: dispatch latency spikes; outbox `published_at` lag grows; rate-limit / concurrency checks fail closed (reject) — by design.
+- Symptom: dispatch latency spikes; outbox `published_at` lag grows; rate-limit / concurrency checks fail closed (reject), by design.
 - Action: restart Redis. The outbox relay catches up automatically. SKIP-LOCKED Postgres fallback can be flipped on via `TASKQ_BROKER=postgres`.
 
 ### DLQ growing
@@ -40,4 +40,4 @@
 
 ## On-call dashboard
 
-Grafana → "Reach TaskQ Overview" — queue depths, throughput, lease ages, error rates, DLQ inflow.
+Grafana → "Reach TaskQ Overview", queue depths, throughput, lease ages, error rates, DLQ inflow.

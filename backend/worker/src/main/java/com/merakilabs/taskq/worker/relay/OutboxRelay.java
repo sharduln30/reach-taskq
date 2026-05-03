@@ -20,7 +20,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * Polls the outbox table on a virtual thread, publishes batches to the broker, and marks rows
- * published. Multiple instances of the app can run this in parallel — each batch is selected
+ * published. Multiple instances of the app can run this in parallel, each batch is selected
  * via {@code FOR UPDATE SKIP LOCKED} so they don't conflict.
  */
 @Component
@@ -88,9 +88,8 @@ public class OutboxRelay {
             if (batch.isEmpty()) {
                 return 0;
             }
-            // Bucket PUBLISH_READY into one pipelined batch (one Redis flush);
-            // SCHEDULE entries are in-memory at the broker (no remote call) and
-            // can stay in a per-element loop without a perf hit.
+            // Pipeline PUBLISH_READY into one Redis flush. SCHEDULE entries are local to the
+            // broker so they can stay in a per-element loop.
             final List<JobBroker.ReadyEntry> ready = new ArrayList<>(batch.size());
             for (final Outbox.Pending p : batch) {
                 if (p.type() == Outbox.EventType.PUBLISH_READY) {

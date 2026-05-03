@@ -22,7 +22,7 @@ import org.springframework.http.ResponseEntity;
 /**
  * Simulates a crashed worker: we manually lease a job with a lease that has already
  * expired, then trigger the reaper. The job should come back to READY and re-process
- * to SUCCEEDED — i.e. crashes don't lose work.
+ * to SUCCEEDED, i.e. crashes don't lose work.
  */
 class CrashRecoveryIntegrationTest extends AbstractIntegrationTest {
 

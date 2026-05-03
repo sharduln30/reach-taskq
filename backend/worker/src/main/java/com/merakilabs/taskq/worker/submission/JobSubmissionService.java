@@ -208,11 +208,10 @@ public class JobSubmissionService {
                         .addValue("now", Timestamp.from(now))
                         .addValue("expires", Timestamp.from(expiresAt)));
         if (rows == 0) {
-            // Lost the race — the other transaction wrote the row first. Force the rest of the
-            // submit transaction to abort with a unique-violation so the outer submit() handler
-            // re-resolves the existing key (replay vs conflict) on the committed row.
+            // Lost the race. Force a unique-violation so submit() re-resolves the committed row
+            // (replay vs conflict).
             throw new DuplicateKeyException(
-                    "idempotency_keys: duplicate (tenant_id,key) — concurrent submit raced");
+                    "idempotency_keys: duplicate (tenant_id,key), concurrent submit raced");
         }
     }
 }

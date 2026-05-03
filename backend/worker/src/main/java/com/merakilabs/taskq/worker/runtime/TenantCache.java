@@ -11,7 +11,7 @@ import org.springframework.stereotype.Component;
 
 /**
  * Tiny TTL cache for the worker hot path. Avoids hitting Postgres for the
- * tenant row on every dispatched job. Stale entries are tolerated — the
+ * tenant row on every dispatched job. Stale entries are tolerated, the
  * tenant's RPS/concurrency knobs are operator-tuned, not safety-critical.
  */
 @Component

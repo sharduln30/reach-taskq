@@ -81,7 +81,7 @@ public final class LuaScripts {
 
     /**
      * Async EVALSHA via Lettuce's async API. Returns a future that completes on Lettuce's
-     * I/O event-executor — never blocks the caller. On NOSCRIPT it reloads and retries
+     * I/O event-executor, never blocks the caller. On NOSCRIPT it reloads and retries
      * once, transparently. Caller must not assume any particular completion thread.
      */
     public <T> CompletionStage<T> evalAsync(

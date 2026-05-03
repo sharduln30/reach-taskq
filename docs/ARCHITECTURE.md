@@ -64,7 +64,7 @@ See the module list in [README](../README.md#repository-layout). Domain code liv
 
 ### At-least-once + idempotency, not exactly-once
 - True exactly-once across a network is impossible. Effectively-exactly-once requires (a) deduplication on the consumer side or (b) idempotent handlers.
-- We provide deduplication on enqueue (idempotency keys, 24h TTL) and recommend idempotent handlers — clients then observe exactly-once semantics.
+- We provide deduplication on enqueue (idempotency keys, 24h TTL) and recommend idempotent handlers, clients then observe exactly-once semantics.
 
 ### Lease / heartbeat / reaper
 - Lease TTL is short (30s default). Workers heartbeat every TTL/3.
@@ -76,7 +76,7 @@ See the module list in [README](../README.md#repository-layout). Domain code liv
 - Cross-tenant scheduling is round-robin on the worker side; within-tenant priority is honored via the `priority` column.
 
 ### Virtual threads
-- Worker runtime uses Java 21 virtual threads — one per in-flight job — which keeps worker code synchronous and readable.
+- Worker runtime uses Java 21 virtual threads, one per in-flight job, which keeps worker code synchronous and readable.
 - Bounded thread pools are still used for DB and Redis connection limits (HikariCP and Lettuce share a netty event loop).
 
 ## Operational notes

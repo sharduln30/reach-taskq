@@ -19,7 +19,7 @@ public interface ConcurrencyLimiter {
     void release(TenantId tenantId, String holderToken);
 
     /**
-     * Refresh the holder's TTL — called from the worker's heartbeat so a long-running job
+     * Refresh the holder's TTL, called from the worker's heartbeat so a long-running job
      * doesn't get auto-pruned. Returns false if the holder was already evicted (worker
      * should treat that as "lost the slot" and yield).
      */
